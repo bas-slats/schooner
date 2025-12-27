@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"schooner/internal/api/handlers"
+	"schooner/internal/auth"
 	"schooner/internal/build"
 	"schooner/internal/build/strategies"
 	"schooner/internal/cloudflare"
@@ -37,6 +38,12 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	buildQueries := queries.NewBuildQueries(db.DB)
 	logQueries := queries.NewLogQueries(db.DB)
 	settingsQueries := queries.NewSettingsQueries(db.DB)
+
+	// Initialize session store (24 hour TTL)
+	sessionStore := auth.NewSessionStore(24 * time.Hour)
+
+	// Initialize auth middleware
+	authMiddleware := auth.NewMiddleware(sessionStore, "/oauth/github/login")
 
 	// Initialize GitHub client (token loaded from settings if available)
 	githubClient := github.NewClient("")
@@ -80,34 +87,41 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager)
 	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager)
 	importHandler := handlers.NewImportHandler(githubClient, appQueries)
-	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient)
+	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient, sessionStore)
 
-	// Static files
+	// Static files (public)
 	fileServer := http.FileServer(http.Dir("ui/static"))
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
-	// Health check
+	// Health check (public)
 	r.Get("/health", healthHandler.Check)
 
-	// Webhook endpoints (no auth - uses signature verification)
+	// Webhook endpoints (public - uses signature verification)
 	r.Post("/webhook/github", webhookHandler.HandleGitHub)
 	r.Post("/webhook/github/{appID}", webhookHandler.HandleGitHubForApp)
 
-	// OAuth endpoints
+	// OAuth endpoints (public)
 	r.Get("/oauth/github/login", oauthHandler.Login)
 	r.Get("/oauth/github/callback", oauthHandler.Callback)
 	r.Get("/oauth/github/status", oauthHandler.Status)
 
-	// UI Pages (HTML responses)
+	// Logout endpoint (public - clears session)
+	r.Get("/logout", oauthHandler.Logout)
+
+	// Protected routes - require authentication
 	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware.RequireAuth)
+
+		// UI Pages (HTML responses)
 		r.Get("/", pageHandler.Dashboard)
 		r.Get("/apps/{appID}", pageHandler.AppDetail)
 		r.Get("/builds/{buildID}", pageHandler.BuildDetail)
 		r.Get("/settings", pageHandler.Settings)
 	})
 
-	// API Routes (JSON/HTMX responses)
+	// API Routes (JSON/HTMX responses) - protected
 	r.Route("/api", func(r chi.Router) {
+		r.Use(authMiddleware.RequireAuth)
 		// Apps
 		r.Route("/apps", func(r chi.Router) {
 			r.Get("/", appHandler.List)

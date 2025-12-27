@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"schooner/internal/auth"
 	"schooner/internal/config"
 	"schooner/internal/database/queries"
 	"schooner/internal/github"
@@ -21,14 +22,16 @@ type OAuthHandler struct {
 	cfg             *config.Config
 	settingsQueries *queries.SettingsQueries
 	githubClient    *github.Client
+	sessionStore    *auth.SessionStore
 }
 
 // NewOAuthHandler creates a new OAuthHandler
-func NewOAuthHandler(cfg *config.Config, settingsQueries *queries.SettingsQueries, githubClient *github.Client) *OAuthHandler {
+func NewOAuthHandler(cfg *config.Config, settingsQueries *queries.SettingsQueries, githubClient *github.Client, sessionStore *auth.SessionStore) *OAuthHandler {
 	return &OAuthHandler{
 		cfg:             cfg,
 		settingsQueries: settingsQueries,
 		githubClient:    githubClient,
+		sessionStore:    sessionStore,
 	}
 }
 
@@ -134,17 +137,28 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save the token
+	// Save the token to settings (for API access)
 	if err := h.settingsQueries.Set(ctx, "github_token", tokenResp.AccessToken); err != nil {
 		slog.Error("failed to save GitHub token", "error", err)
 		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to save token"), http.StatusTemporaryRedirect)
 		return
 	}
 
+	// Create session for the user
+	session, err := h.sessionStore.Create(username, tokenResp.AccessToken)
+	if err != nil {
+		slog.Error("failed to create session", "error", err)
+		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to create session"), http.StatusTemporaryRedirect)
+		return
+	}
+
+	// Set session cookie (24 hours)
+	auth.SetSessionCookie(w, session.ID, 86400)
+
 	slog.Info("GitHub OAuth completed", "username", username)
 
-	// Redirect to settings with success
-	http.Redirect(w, r, "/settings?github_connected=true", http.StatusTemporaryRedirect)
+	// Redirect to dashboard
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 }
 
 type tokenResponse struct {
@@ -197,4 +211,22 @@ func (h *OAuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"oauth_configured": h.cfg.GitHubOAuth.ClientID != "" && h.cfg.GitHubOAuth.ClientSecret != "",
 	})
+}
+
+// Logout handles GET /logout - logs out the user
+func (h *OAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// Get session from cookie
+	cookie, err := r.Cookie(auth.CookieName)
+	if err == nil {
+		// Delete session
+		h.sessionStore.Delete(cookie.Value)
+	}
+
+	// Clear cookie
+	auth.ClearSessionCookie(w)
+
+	slog.Info("user logged out")
+
+	// Redirect to login
+	http.Redirect(w, r, "/oauth/github/login", http.StatusTemporaryRedirect)
 }

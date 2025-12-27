@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"schooner/internal/auth"
 	"schooner/internal/cloudflare"
 	"schooner/internal/config"
 	"schooner/internal/database/queries"
@@ -36,7 +37,13 @@ func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQue
 	}
 }
 
-func (h *PageHandler) writeHeader(w http.ResponseWriter, title string) {
+func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title string) {
+	// Get session for username display
+	username := ""
+	if session := auth.GetSession(r.Context()); session != nil {
+		username = session.Username
+	}
+
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html lang="en">
@@ -56,14 +63,17 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, title string) {
                 <img src="/static/img/logo.svg" alt="Schooner" class="h-8 w-8">
                 <span class="text-xl font-bold">Schooner</span>
             </a>
-            <div class="flex space-x-4">
+            <div class="flex items-center space-x-4">
                 <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
                 <a href="/settings" class="text-gray-600 hover:text-gray-900">Settings</a>
+                <span class="text-gray-400">|</span>
+                <span class="text-gray-600 text-sm">%s</span>
+                <a href="/logout" class="text-gray-500 hover:text-gray-700 text-sm">Logout</a>
             </div>
         </div>
     </nav>
     <main class="max-w-7xl mx-auto px-6 py-8">
-`, html.EscapeString(title))
+`, html.EscapeString(title), html.EscapeString(username))
 }
 
 func (h *PageHandler) writeFooter(w http.ResponseWriter) {
@@ -380,7 +390,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to list builds", "error", err)
 	}
 
-	h.writeHeader(w, "Dashboard")
+	h.writeHeader(w, r, "Dashboard")
 
 	fmt.Fprint(w, `<h1 class="text-2xl font-bold mb-6">Applications</h1>`)
 
@@ -703,7 +713,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
 
 	builds, _ := h.buildQueries.ListByAppID(ctx, appID, 20, 0)
 
-	h.writeHeader(w, app.Name)
+	h.writeHeader(w, r, app.Name)
 
 	fmt.Fprintf(w, `
         <div class="flex items-center justify-between mb-6">
@@ -799,7 +809,7 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeHeader(w, "Build "+build.ID[:8])
+	h.writeHeader(w, r, "Build "+build.ID[:8])
 
 	fmt.Fprintf(w, `
         <div class="flex items-center mb-6">
@@ -886,7 +896,7 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeHeader(w, "Settings")
+	h.writeHeader(w, r, "Settings")
 
 	fmt.Fprint(w, `
         <h1 class="text-2xl font-bold mb-6">Settings</h1>
