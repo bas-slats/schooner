@@ -30,18 +30,51 @@ func (s *ComposeStrategy) Name() models.BuildStrategy {
 	return models.BuildStrategyCompose
 }
 
+// composeFileNames is the list of compose file names to check in order
+var composeFileNames = []string{
+	"docker-compose.yml",
+	"docker-compose.yaml",
+	"compose.yml",
+	"compose.yaml",
+}
+
+// FindComposeFile finds the compose file in the repo, checking configured name first
+func FindComposeFile(repoPath, configuredFile string) string {
+	// Try configured file first
+	if configuredFile != "" {
+		composePath := filepath.Join(repoPath, configuredFile)
+		if _, err := os.Stat(composePath); err == nil {
+			return configuredFile
+		}
+	}
+
+	// Try common names
+	for _, name := range composeFileNames {
+		composePath := filepath.Join(repoPath, name)
+		if _, err := os.Stat(composePath); err == nil {
+			return name
+		}
+	}
+
+	return ""
+}
+
 // Validate checks if the strategy can be used
 func (s *ComposeStrategy) Validate(ctx context.Context, opts build.BuildOptions) error {
-	composePath := filepath.Join(opts.RepoPath, opts.ComposeFile)
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		return fmt.Errorf("compose file not found: %s", composePath)
+	composeFile := FindComposeFile(opts.RepoPath, opts.ComposeFile)
+	if composeFile == "" {
+		return fmt.Errorf("compose file not found in %s (tried: %s and common names)", opts.RepoPath, opts.ComposeFile)
 	}
 	return nil
 }
 
 // Build executes the build using docker compose
 func (s *ComposeStrategy) Build(ctx context.Context, opts build.BuildOptions) (*build.BuildResult, error) {
-	composePath := filepath.Join(opts.RepoPath, opts.ComposeFile)
+	composeFile := FindComposeFile(opts.RepoPath, opts.ComposeFile)
+	if composeFile == "" {
+		return nil, fmt.Errorf("compose file not found")
+	}
+	composePath := filepath.Join(opts.RepoPath, composeFile)
 
 	fmt.Fprintf(opts.LogWriter, "Building with Docker Compose: %s\n", composePath)
 
@@ -106,7 +139,11 @@ func (s *ComposeStrategy) Build(ctx context.Context, opts build.BuildOptions) (*
 
 // Up brings up the compose services
 func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error {
-	composePath := filepath.Join(opts.RepoPath, opts.ComposeFile)
+	composeFile := FindComposeFile(opts.RepoPath, opts.ComposeFile)
+	if composeFile == "" {
+		return fmt.Errorf("compose file not found")
+	}
+	composePath := filepath.Join(opts.RepoPath, composeFile)
 
 	fmt.Fprintf(opts.LogWriter, "Starting services with Docker Compose\n")
 

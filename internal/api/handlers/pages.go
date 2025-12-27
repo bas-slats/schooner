@@ -528,7 +528,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                         </td>
                     </tr>`,
 				html.EscapeString(build.AppName),
-				html.EscapeString(string(build.Status)),
+				buildStatusBadge(build.Status),
 				html.EscapeString(commitSHA),
 				html.EscapeString(string(build.Trigger)),
 				html.EscapeString(build.ID))
@@ -1016,7 +1016,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
                             <a href="/builds/%s" class="text-purple-600 hover:text-purple-700">View Logs</a>
                         </td>
                     </tr>`,
-			html.EscapeString(string(build.Status)),
+			buildStatusBadge(build.Status),
 			html.EscapeString(commitSHA),
 			html.EscapeString(commitMsg),
 			html.EscapeString(string(build.Trigger)),
@@ -1116,7 +1116,7 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 		html.EscapeString(build.AppID),
 		html.EscapeString(build.ID[:8]),
 		html.EscapeString(build.AppName),
-		html.EscapeString(string(build.Status)),
+		buildStatusBadge(build.Status),
 		html.EscapeString(build.GetShortSHA()),
 		html.EscapeString(string(build.Trigger)),
 		html.EscapeString(build.ID))
@@ -1883,4 +1883,36 @@ func webhookButton(app *models.App) string {
 	}
 	return fmt.Sprintf(`<button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>`,
 		app.ID, html.EscapeString(app.Name))
+}
+
+func buildStatusBadge(status models.BuildStatus) string {
+	var bgClass, textClass, icon string
+	switch status {
+	case models.BuildStatusSuccess:
+		bgClass = "bg-green-100"
+		textClass = "text-green-700"
+		icon = `<svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>`
+	case models.BuildStatusFailed:
+		bgClass = "bg-red-100"
+		textClass = "text-red-700"
+		icon = `<svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`
+	case models.BuildStatusBuilding, models.BuildStatusCloning, models.BuildStatusDeploying:
+		bgClass = "bg-blue-100"
+		textClass = "text-blue-700"
+		icon = `<svg class="w-3 h-3 mr-1 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`
+	case models.BuildStatusPending:
+		bgClass = "bg-yellow-100"
+		textClass = "text-yellow-700"
+		icon = `<svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path></svg>`
+	case models.BuildStatusCancelled:
+		bgClass = "bg-gray-100"
+		textClass = "text-gray-700"
+		icon = `<svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>`
+	default:
+		bgClass = "bg-gray-100"
+		textClass = "text-gray-700"
+		icon = ""
+	}
+	return fmt.Sprintf(`<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium %s %s">%s%s</span>`,
+		bgClass, textClass, icon, html.EscapeString(string(status)))
 }
