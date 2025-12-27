@@ -77,6 +77,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	var tunnelManager *cloudflare.Manager
 	if dockerClient != nil {
 		tunnelManager = cloudflare.NewManager(cfg, dockerClient)
+		tunnelManager.SetSettingsQueries(settingsQueries)
 	}
 
 	// Initialize handlers

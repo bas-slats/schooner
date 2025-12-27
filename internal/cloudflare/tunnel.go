@@ -33,11 +33,17 @@ type TunnelConfig struct {
 	Ingress []IngressRule `yaml:"ingress"`
 }
 
+// SettingsGetter interface for getting settings from the database
+type SettingsGetter interface {
+	Get(ctx context.Context, key string) (string, error)
+}
+
 // Manager manages the Cloudflare tunnel
 type Manager struct {
-	cfg          *config.Config
-	dockerClient *docker.Client
-	mu           sync.Mutex
+	cfg             *config.Config
+	dockerClient    *docker.Client
+	settingsQueries SettingsGetter
+	mu              sync.Mutex
 }
 
 // NewManager creates a new tunnel manager
@@ -48,16 +54,53 @@ func NewManager(cfg *config.Config, dockerClient *docker.Client) *Manager {
 	}
 }
 
+// SetSettingsQueries sets the settings queries for database-driven config
+func (m *Manager) SetSettingsQueries(sq SettingsGetter) {
+	m.settingsQueries = sq
+}
+
+// getTunnelConfig loads tunnel configuration from database or config file
+func (m *Manager) getTunnelConfig(ctx context.Context) (token, tunnelID, domain string) {
+	// Try database first
+	if m.settingsQueries != nil {
+		if t, err := m.settingsQueries.Get(ctx, "cloudflare_tunnel_token"); err == nil && t != "" {
+			token = t
+		}
+		if id, err := m.settingsQueries.Get(ctx, "cloudflare_tunnel_id"); err == nil && id != "" {
+			tunnelID = id
+		}
+		if d, err := m.settingsQueries.Get(ctx, "cloudflare_domain"); err == nil && d != "" {
+			domain = d
+		}
+	}
+
+	// Fall back to config file if not set in database
+	if token == "" {
+		token = m.cfg.Cloudflare.TunnelToken
+	}
+	if tunnelID == "" {
+		tunnelID = m.cfg.Cloudflare.TunnelID
+	}
+	if domain == "" {
+		domain = m.cfg.Cloudflare.Domain
+	}
+
+	return
+}
+
 // IsConfigured returns true if Cloudflare tunnel is configured
 func (m *Manager) IsConfigured() bool {
-	return m.cfg.Cloudflare.TunnelToken != "" && m.cfg.Cloudflare.Domain != ""
+	token, _, domain := m.getTunnelConfig(context.Background())
+	return token != "" && domain != ""
 }
 
 // Start starts the cloudflared container
 func (m *Manager) Start(ctx context.Context) error {
-	if !m.IsConfigured() {
-		slog.Info("Cloudflare tunnel not configured, skipping")
-		return nil
+	token, tunnelID, domain := m.getTunnelConfig(ctx)
+
+	if token == "" || domain == "" {
+		slog.Info("Cloudflare tunnel not configured, skipping", "has_token", token != "", "has_domain", domain != "")
+		return fmt.Errorf("tunnel not configured: token and domain are required")
 	}
 
 	m.mu.Lock()
@@ -76,7 +119,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	// Create initial config
-	if err := m.writeConfig([]IngressRule{}); err != nil {
+	if err := m.writeConfigWithTunnelID([]IngressRule{}, tunnelID); err != nil {
 		return fmt.Errorf("failed to write initial config: %w", err)
 	}
 
@@ -84,11 +127,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	_ = m.dockerClient.StopContainer(ctx, cloudflaredContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, cloudflaredContainer)
 
+	slog.Info("starting cloudflared tunnel", "domain", domain, "tunnel_id", tunnelID)
+
 	// Start cloudflared container
 	containerConfig := docker.ContainerConfig{
 		Name:  cloudflaredContainer,
 		Image: cloudflaredImage,
-		Cmd:   []string{"tunnel", "--no-autoupdate", "run", "--token", m.cfg.Cloudflare.TunnelToken},
+		Cmd:   []string{"tunnel", "--no-autoupdate", "run", "--token", token},
 		Labels: map[string]string{
 			"schooner.managed": "true",
 			"schooner.service": "cloudflared",
@@ -125,6 +170,11 @@ func (m *Manager) UpdateRoutes(ctx context.Context, apps []*models.App) error {
 		return nil
 	}
 
+	_, _, domain := m.getTunnelConfig(ctx)
+	if domain == "" {
+		return fmt.Errorf("domain not configured")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -142,7 +192,7 @@ func (m *Manager) UpdateRoutes(ctx context.Context, apps []*models.App) error {
 			continue
 		}
 
-		hostname := fmt.Sprintf("%s.%s", subdomain, m.cfg.Cloudflare.Domain)
+		hostname := fmt.Sprintf("%s.%s", subdomain, domain)
 		service := fmt.Sprintf("http://localhost:%d", port)
 
 		rules = append(rules, IngressRule{
@@ -203,8 +253,14 @@ func (m *Manager) RemoveRoute(ctx context.Context, app *models.App) error {
 
 // writeConfig writes the cloudflared config.yml file
 func (m *Manager) writeConfig(rules []IngressRule) error {
+	_, tunnelID, _ := m.getTunnelConfig(context.Background())
+	return m.writeConfigWithTunnelID(rules, tunnelID)
+}
+
+// writeConfigWithTunnelID writes the cloudflared config.yml file with a specific tunnel ID
+func (m *Manager) writeConfigWithTunnelID(rules []IngressRule, tunnelID string) error {
 	cfg := TunnelConfig{
-		Tunnel:  m.cfg.Cloudflare.TunnelID,
+		Tunnel:  tunnelID,
 		Ingress: rules,
 	}
 
