@@ -32,6 +32,10 @@ type Orchestrator struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancel     context.CancelFunc
+
+	// Per-app locks to prevent concurrent builds for the same app
+	appLocks   map[string]*sync.Mutex
+	appLocksMu sync.Mutex
 }
 
 // NewOrchestrator creates a new build orchestrator
@@ -55,6 +59,7 @@ func NewOrchestrator(
 		buildQueue:   make(chan string, 100),
 		ctx:          ctx,
 		cancel:       cancel,
+		appLocks:     make(map[string]*sync.Mutex),
 	}
 
 	return o
@@ -93,6 +98,20 @@ func (o *Orchestrator) QueueBuild(buildID string) {
 	}
 }
 
+// getAppLock returns the mutex for a specific app, creating one if needed
+func (o *Orchestrator) getAppLock(appID string) *sync.Mutex {
+	o.appLocksMu.Lock()
+	defer o.appLocksMu.Unlock()
+
+	if lock, ok := o.appLocks[appID]; ok {
+		return lock
+	}
+
+	lock := &sync.Mutex{}
+	o.appLocks[appID] = lock
+	return lock
+}
+
 // worker processes builds from the queue
 func (o *Orchestrator) worker(id int) {
 	defer o.wg.Done()
@@ -122,6 +141,11 @@ func (o *Orchestrator) processBuild(buildID string) {
 		return
 	}
 
+	// Acquire per-app lock to prevent concurrent builds for the same app
+	appLock := o.getAppLock(build.AppID)
+	appLock.Lock()
+	defer appLock.Unlock()
+
 	// Get app
 	app, err := o.appQueries.GetByID(ctx, build.AppID)
 	if err != nil || app == nil {
@@ -131,7 +155,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 	}
 
 	logger = logger.With("app", app.Name)
-	logger.Info("starting build")
+	logger.Info("starting build (app locked)")
 
 	// Create log writer
 	logWriter := newBuildLogWriter(build.ID, o.logQueries)
