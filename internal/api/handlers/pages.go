@@ -1808,7 +1808,7 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
                             <div class="flex justify-between mt-4">
                                 <div class="flex space-x-2">
                                     <button type="button" onclick="confirmDelete('%s', '%s')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white">Delete</button>
-                                    <button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>
+                                    %s
                                 </div>
                                 <div class="flex space-x-2">
                                     <button type="button" onclick="toggleEditForm('%s')" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 text-gray-700">Cancel</button>
@@ -1845,8 +1845,7 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
 		checked(app.Enabled),
 		app.ID,
 		html.EscapeString(app.Name),
-		app.ID,
-		html.EscapeString(app.Name),
+		webhookButton(app),
 		app.ID)
 }
 
@@ -1876,4 +1875,12 @@ func formatPort(port int) string {
 		return ""
 	}
 	return fmt.Sprintf("%d", port)
+}
+
+func webhookButton(app *models.App) string {
+	if app.GetWebhookSecret() != "" {
+		return ""
+	}
+	return fmt.Sprintf(`<button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>`,
+		app.ID, html.EscapeString(app.Name))
 }
