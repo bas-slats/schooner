@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"schooner/internal/build"
 	"schooner/internal/config"
 	"schooner/internal/database"
 	"schooner/internal/database/queries"
@@ -26,15 +27,17 @@ type WebhookHandler struct {
 	appQueries   *queries.AppQueries
 	buildQueries *queries.BuildQueries
 	logQueries   *queries.LogQueries
+	orchestrator *build.Orchestrator
 }
 
 // NewWebhookHandler creates a new WebhookHandler
-func NewWebhookHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, logQueries *queries.LogQueries) *WebhookHandler {
+func NewWebhookHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, logQueries *queries.LogQueries, orchestrator *build.Orchestrator) *WebhookHandler {
 	return &WebhookHandler{
 		cfg:          cfg,
 		appQueries:   appQueries,
 		buildQueries: buildQueries,
 		logQueries:   logQueries,
+		orchestrator: orchestrator,
 	}
 }
 
@@ -245,20 +248,13 @@ func (h *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request, a
 			continue
 		}
 
-		// Add initial log entry
-		log := &models.BuildLog{
-			BuildID:   build.ID,
-			Level:     models.LogLevelInfo,
-			Message:   "Build triggered by webhook",
-			Source:    models.LogSourceSystem,
-			Timestamp: time.Now(),
-		}
-		h.logQueries.Append(ctx, log)
-
 		slog.Info("build queued", "app", app.Name, "buildID", build.ID, "commit", commitSHA[:8])
 		buildIDs = append(buildIDs, build.ID)
 
-		// TODO: Actually trigger build execution via build orchestrator
+		// Trigger build execution via orchestrator
+		if h.orchestrator != nil {
+			h.orchestrator.QueueBuild(build.ID)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
