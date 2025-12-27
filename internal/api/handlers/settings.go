@@ -8,6 +8,7 @@ import (
 
 	"schooner/internal/cloudflare"
 	"schooner/internal/database/queries"
+	"schooner/internal/git"
 	"schooner/internal/github"
 	"schooner/internal/observability"
 )
@@ -16,15 +17,17 @@ import (
 type SettingsHandler struct {
 	settingsQueries      *queries.SettingsQueries
 	githubClient         *github.Client
+	gitClient            *git.Client
 	tunnelManager        *cloudflare.Manager
 	observabilityManager *observability.Manager
 }
 
 // NewSettingsHandler creates a new SettingsHandler
-func NewSettingsHandler(settingsQueries *queries.SettingsQueries, githubClient *github.Client, tunnelManager *cloudflare.Manager, observabilityManager *observability.Manager) *SettingsHandler {
+func NewSettingsHandler(settingsQueries *queries.SettingsQueries, githubClient *github.Client, gitClient *git.Client, tunnelManager *cloudflare.Manager, observabilityManager *observability.Manager) *SettingsHandler {
 	return &SettingsHandler{
 		settingsQueries:      settingsQueries,
 		githubClient:         githubClient,
+		gitClient:            gitClient,
 		tunnelManager:        tunnelManager,
 		observabilityManager: observabilityManager,
 	}
@@ -83,8 +86,11 @@ func (h *SettingsHandler) SetGitHubToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Update the shared client
+	// Update the shared clients
 	h.githubClient.SetToken(req.Token)
+	if h.gitClient != nil {
+		h.gitClient.SetHTTPAuth("x-access-token", req.Token)
+	}
 
 	slog.Info("GitHub token configured", "username", username)
 
@@ -106,8 +112,11 @@ func (h *SettingsHandler) DeleteGitHubToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Clear the shared client
+	// Clear the shared clients
 	h.githubClient.SetToken("")
+	if h.gitClient != nil {
+		h.gitClient.SetHTTPAuth("", "")
+	}
 
 	slog.Info("GitHub token removed")
 

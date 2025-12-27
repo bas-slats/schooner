@@ -78,6 +78,15 @@ func NewClient(workDir string, opts ...ClientOption) (*Client, error) {
 	return c, nil
 }
 
+// SetHTTPAuth updates the HTTP authentication (for dynamic token updates)
+func (c *Client) SetHTTPAuth(username, token string) {
+	c.auth = &http.BasicAuth{
+		Username: username,
+		Password: token,
+	}
+	c.logger.Info("git client auth updated")
+}
+
 // CloneOptions configures clone/pull operations
 type CloneOptions struct {
 	URL      string

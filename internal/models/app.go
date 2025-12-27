@@ -117,6 +117,11 @@ func (a *App) GetWebhookSecret() string {
 	return ""
 }
 
+// SetWebhookSecret sets the webhook secret
+func (a *App) SetWebhookSecret(secret string) {
+	a.WebhookSecret = sql.NullString{String: secret, Valid: secret != ""}
+}
+
 // GetSubdomain returns subdomain or empty string
 func (a *App) GetSubdomain() string {
 	if a.Subdomain.Valid {

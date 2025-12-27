@@ -14,6 +14,7 @@ import (
 	"schooner/internal/auth"
 	"schooner/internal/config"
 	"schooner/internal/database/queries"
+	"schooner/internal/git"
 	"schooner/internal/github"
 )
 
@@ -22,15 +23,17 @@ type OAuthHandler struct {
 	cfg             *config.Config
 	settingsQueries *queries.SettingsQueries
 	githubClient    *github.Client
+	gitClient       *git.Client
 	sessionStore    *auth.SessionStore
 }
 
 // NewOAuthHandler creates a new OAuthHandler
-func NewOAuthHandler(cfg *config.Config, settingsQueries *queries.SettingsQueries, githubClient *github.Client, sessionStore *auth.SessionStore) *OAuthHandler {
+func NewOAuthHandler(cfg *config.Config, settingsQueries *queries.SettingsQueries, githubClient *github.Client, gitClient *git.Client, sessionStore *auth.SessionStore) *OAuthHandler {
 	return &OAuthHandler{
 		cfg:             cfg,
 		settingsQueries: settingsQueries,
 		githubClient:    githubClient,
+		gitClient:       gitClient,
 		sessionStore:    sessionStore,
 	}
 }
@@ -159,6 +162,12 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to save GitHub token", "error", err)
 		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to save token"), http.StatusTemporaryRedirect)
 		return
+	}
+
+	// Update git client auth for cloning private repos
+	if h.gitClient != nil {
+		h.gitClient.SetHTTPAuth("x-access-token", tokenResp.AccessToken)
+		slog.Info("git client auth updated after OAuth")
 	}
 
 	// Create session for the user

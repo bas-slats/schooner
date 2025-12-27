@@ -104,10 +104,10 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	appHandler := handlers.NewAppHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, orchestrator, githubClient)
 	buildHandler := handlers.NewBuildHandler(buildQueries, logQueries)
 	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, observabilityManager)
-	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager, observabilityManager)
+	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, gitClient, tunnelManager, observabilityManager)
 	logsHandler := handlers.NewLogsHandler(observabilityManager, appQueries)
 	importHandler := handlers.NewImportHandler(cfg, githubClient, appQueries)
-	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient, sessionStore)
+	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient, gitClient, sessionStore)
 
 	// Static files (public)
 	fileServer := http.FileServer(http.Dir("ui/static"))
@@ -157,6 +157,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 			r.Post("/{appID}/stop", appHandler.Stop)
 			r.Post("/{appID}/start", appHandler.Start)
 			r.Post("/{appID}/restart", appHandler.Restart)
+			r.Post("/{appID}/webhook", appHandler.ConfigureWebhook)
 		})
 
 		// Builds

@@ -548,6 +548,83 @@ func (h *AppHandler) Restart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ConfigureWebhook handles POST /api/apps/{appID}/webhook - sets up GitHub webhook
+func (h *AppHandler) ConfigureWebhook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	if h.githubClient == nil || !h.githubClient.HasToken() {
+		http.Error(w, "GitHub token not configured", http.StatusBadRequest)
+		return
+	}
+
+	// Parse repo URL to get owner/repo
+	owner, repo, err := github.ParseRepoURL(app.RepoURL)
+	if err != nil {
+		slog.Error("failed to parse repo URL", "url", app.RepoURL, "error", err)
+		http.Error(w, "invalid repository URL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Generate webhook secret if not set
+	webhookSecret := app.GetWebhookSecret()
+	if webhookSecret == "" {
+		secretBytes := make([]byte, 32)
+		if _, err := rand.Read(secretBytes); err != nil {
+			slog.Error("failed to generate webhook secret", "error", err)
+			http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+			return
+		}
+		webhookSecret = hex.EncodeToString(secretBytes)
+
+		// Save the secret to the app
+		app.SetWebhookSecret(webhookSecret)
+		if err := h.appQueries.Update(ctx, app); err != nil {
+			slog.Error("failed to save webhook secret", "error", err)
+			http.Error(w, "failed to save webhook secret", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Build webhook URL
+	webhookURL := fmt.Sprintf("%s/webhook/github/%s", h.cfg.Server.BaseURL, app.ID)
+
+	// Create or ensure webhook exists
+	webhook, created, err := h.githubClient.EnsureWebhook(ctx, owner, repo, webhookURL, webhookSecret)
+	if err != nil {
+		slog.Error("failed to configure webhook", "error", err)
+		http.Error(w, "failed to configure webhook: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if created {
+		slog.Info("webhook created", "app", app.Name, "repo", fmt.Sprintf("%s/%s", owner, repo), "webhook_id", webhook.ID)
+	} else {
+		slog.Info("webhook already exists", "app", app.Name, "repo", fmt.Sprintf("%s/%s", owner, repo), "webhook_id", webhook.ID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"created":     created,
+		"webhook_id":  webhook.ID,
+		"webhook_url": webhookURL,
+		"message":     "Webhook configured successfully",
+	})
+}
+
 // AllStatuses handles GET /api/apps/statuses - returns all app container statuses
 func (h *AppHandler) AllStatuses(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

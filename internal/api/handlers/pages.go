@@ -139,6 +139,25 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
             }
         }
 
+        // Configure webhook for app
+        function configureWebhook(appId, appName) {
+            if (confirm('Configure GitHub webhook for "' + appName + '"?')) {
+                fetch('/api/apps/' + appId + '/webhook', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const msg = data.created ? 'Webhook created successfully!' : 'Webhook already configured.';
+                            showToast(msg, 'success');
+                        } else {
+                            showToast('Failed to configure webhook: ' + (data.message || 'Unknown error'), 'error');
+                        }
+                    })
+                    .catch(err => {
+                        showToast('Failed to configure webhook: ' + err.message, 'error');
+                    });
+            }
+        }
+
         // GitHub import functions
         function showGitHubTokenForm() {
             document.getElementById('github-token-form').classList.remove('hidden');
@@ -1154,26 +1173,6 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, `</div>`)
 
-	// Webhook info
-	fmt.Fprintf(w, `
-        <div class="mt-8">
-            <h2 class="text-xl font-bold mb-4">Webhook Configuration</h2>
-            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
-                <p class="text-gray-500 mb-4">Configure GitHub webhooks to trigger automatic deployments:</p>
-                <div class="bg-gray-50 rounded p-4 font-mono text-sm mb-4">
-                    <p><span class="text-gray-500">Webhook URL:</span> <span class="text-purple-600">%s/webhook/github</span></p>
-                    <p><span class="text-gray-500">Content type:</span> application/json</p>
-                    <p><span class="text-gray-500">Events:</span> Push events</p>
-                </div>
-                <p class="text-gray-500 text-sm">For app-specific webhooks, use: <code class="bg-gray-50 px-2 py-1 rounded">%s/webhook/github/{app-id}</code></p>
-            </div>
-        </div>`,
-		html.EscapeString(h.cfg.Server.BaseURL),
-		html.EscapeString(h.cfg.Server.BaseURL))
-
-	// Clone Directory Setting
-	h.renderCloneDirectorySettings(w)
-
 	// GitHub Integration
 	h.renderGitHubIntegration(w)
 
@@ -1187,55 +1186,6 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
 	h.renderImportModal(w)
 
 	h.writeFooter(w)
-}
-
-func (h *PageHandler) renderCloneDirectorySettings(w http.ResponseWriter) {
-	fmt.Fprint(w, `
-        <div class="mt-8">
-            <h2 class="text-xl font-bold mb-4">Clone Directory</h2>
-            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
-                <p class="text-gray-500 mb-4">Configure the root directory where repositories are cloned for builds.</p>
-                <div id="clone-directory-config">
-                    <form onsubmit="submitCloneDirectory(event)" class="flex items-end space-x-4">
-                        <div class="flex-1">
-                            <label class="block text-sm text-gray-500 mb-1">Clone Directory Path</label>
-                            <input type="text" name="clone_directory" id="clone-directory-input"
-                                placeholder="./data/repos"
-                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
-                        </div>
-                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save</button>
-                    </form>
-                    <p class="text-xs text-gray-400 mt-2">This is where project repositories will be cloned for building. Make sure the directory exists and is writable.</p>
-                </div>
-            </div>
-        </div>
-        <script>
-            // Load current clone directory on page load
-            fetch('/api/settings/clone-directory')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('clone-directory-input').value = data.clone_directory || './data/repos';
-                });
-
-            function submitCloneDirectory(event) {
-                event.preventDefault();
-                const form = event.target;
-                const cloneDir = form.querySelector('input[name="clone_directory"]').value;
-
-                fetch('/api/settings/clone-directory', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clone_directory: cloneDir })
-                })
-                .then(response => {
-                    if (response.ok) {
-                        alert('Clone directory saved successfully');
-                    } else {
-                        response.text().then(text => alert('Failed to save: ' + text));
-                    }
-                });
-            }
-        </script>`)
 }
 
 func (h *PageHandler) renderGitHubIntegration(w http.ResponseWriter) {
@@ -1856,7 +1806,10 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
                                 </div>
                             </div>
                             <div class="flex justify-between mt-4">
-                                <button type="button" onclick="confirmDelete('%s', '%s')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white">Delete</button>
+                                <div class="flex space-x-2">
+                                    <button type="button" onclick="confirmDelete('%s', '%s')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white">Delete</button>
+                                    <button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>
+                                </div>
                                 <div class="flex space-x-2">
                                     <button type="button" onclick="toggleEditForm('%s')" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 text-gray-700">Cancel</button>
                                     <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save Changes</button>
@@ -1890,6 +1843,8 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
 		html.EscapeString(app.GetEnvVarsAsString()),
 		checked(app.AutoDeploy),
 		checked(app.Enabled),
+		app.ID,
+		html.EscapeString(app.Name),
 		app.ID,
 		html.EscapeString(app.Name),
 		app.ID)

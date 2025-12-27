@@ -1,0 +1,24 @@
+#!/bin/bash
+# Pre-commit hook for Schooner
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Format code
+echo "Formatting code..."
+go fmt ./...
+
+# Vet for issues
+echo "Running go vet..."
+go vet ./...
+
+# Run tests
+echo "Running tests..."
+go test ./...
+
+# Build to ensure compilation
+echo "Building..."
+go build -o /dev/null ./cmd/schooner
+
+echo "All pre-commit checks passed!"
