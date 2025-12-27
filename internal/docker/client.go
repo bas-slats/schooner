@@ -53,10 +53,12 @@ func (c *Client) Ping(ctx context.Context) error {
 type ContainerConfig struct {
 	Name          string
 	Image         string
+	Cmd           []string
 	Env           []string
 	Ports         map[string]string // container:host
 	Volumes       map[string]string // host:container
 	Networks      []string
+	NetworkMode   string // e.g., "host", "bridge"
 	RestartPolicy string
 	Labels        map[string]string
 }
@@ -324,4 +326,63 @@ func (c *Client) StopContainer(ctx context.Context, nameOrID string, timeout tim
 func (c *Client) RestartContainer(ctx context.Context, nameOrID string, timeout time.Duration) error {
 	timeoutSecs := int(timeout.Seconds())
 	return c.cli.ContainerRestart(ctx, nameOrID, container.StopOptions{Timeout: &timeoutSecs})
+}
+
+// RemoveContainer removes a container
+func (c *Client) RemoveContainer(ctx context.Context, nameOrID string) error {
+	return c.cli.ContainerRemove(ctx, nameOrID, container.RemoveOptions{Force: true})
+}
+
+// CreateAndStartContainer creates and starts a container with full config
+func (c *Client) CreateAndStartContainer(ctx context.Context, cfg ContainerConfig) (string, error) {
+	c.logger.Info("creating container", "name", cfg.Name, "image", cfg.Image)
+
+	// Ensure image exists
+	if err := c.ensureImage(ctx, cfg.Image); err != nil {
+		return "", fmt.Errorf("failed to ensure image: %w", err)
+	}
+
+	// Build container config
+	containerConfig := &container.Config{
+		Image:  cfg.Image,
+		Cmd:    cfg.Cmd,
+		Env:    cfg.Env,
+		Labels: cfg.Labels,
+	}
+
+	// Build host config
+	hostConfig := &container.HostConfig{
+		PortBindings: toPortBindings(cfg.Ports),
+		Binds:        toBinds(cfg.Volumes),
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyMode(cfg.RestartPolicy),
+		},
+	}
+
+	if cfg.NetworkMode != "" {
+		hostConfig.NetworkMode = container.NetworkMode(cfg.NetworkMode)
+	}
+
+	// Build network config
+	networkConfig := &network.NetworkingConfig{}
+	if len(cfg.Networks) > 0 && cfg.NetworkMode == "" {
+		networkConfig.EndpointsConfig = make(map[string]*network.EndpointSettings)
+		for _, net := range cfg.Networks {
+			networkConfig.EndpointsConfig[net] = &network.EndpointSettings{}
+		}
+	}
+
+	// Create container
+	resp, err := c.cli.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, cfg.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to create container: %w", err)
+	}
+
+	// Start container
+	if err := c.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("failed to start container: %w", err)
+	}
+
+	c.logger.Info("container started", "id", resp.ID[:12], "name", cfg.Name)
+	return resp.ID, nil
 }

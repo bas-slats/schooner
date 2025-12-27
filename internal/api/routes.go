@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"schooner/internal/api/handlers"
+	"schooner/internal/cloudflare"
 	"schooner/internal/config"
 	"schooner/internal/database"
 	"schooner/internal/database/queries"
@@ -43,13 +44,19 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 		slog.Warn("failed to create Docker client, container management disabled", "error", err)
 	}
 
+	// Initialize Cloudflare tunnel manager
+	var tunnelManager *cloudflare.Manager
+	if dockerClient != nil {
+		tunnelManager = cloudflare.NewManager(cfg, dockerClient)
+	}
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	webhookHandler := handlers.NewWebhookHandler(cfg, appQueries, buildQueries, logQueries)
-	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient)
+	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient, tunnelManager)
 	buildHandler := handlers.NewBuildHandler(buildQueries, logQueries)
-	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient)
-	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient)
+	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager)
+	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager)
 	importHandler := handlers.NewImportHandler(githubClient, appQueries)
 	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient)
 
@@ -116,6 +123,12 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 			r.Get("/github-status", settingsHandler.GetGitHubStatus)
 			r.Get("/clone-directory", settingsHandler.GetCloneDirectory)
 			r.Post("/clone-directory", settingsHandler.SetCloneDirectory)
+
+			// Cloudflare Tunnel
+			r.Get("/tunnel-status", settingsHandler.GetTunnelStatus)
+			r.Post("/tunnel", settingsHandler.SetTunnelConfig)
+			r.Post("/tunnel/start", settingsHandler.StartTunnel)
+			r.Post("/tunnel/stop", settingsHandler.StopTunnel)
 		})
 
 		// GitHub import

@@ -133,9 +133,20 @@ CREATE INDEX IF NOT EXISTS idx_build_logs_build_id ON build_logs(build_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_app_id ON deployments(app_id);
 `
 
+	// Run migrations
 	_, err := db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Add new columns if they don't exist (for existing databases)
+	alterStatements := []string{
+		"ALTER TABLE apps ADD COLUMN subdomain TEXT",
+		"ALTER TABLE apps ADD COLUMN public_port INTEGER",
+	}
+
+	for _, stmt := range alterStatements {
+		_, _ = db.Exec(stmt) // Ignore errors - column may already exist
 	}
 
 	slog.Info("database migrations completed")

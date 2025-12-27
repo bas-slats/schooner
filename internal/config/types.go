@@ -8,6 +8,7 @@ type Config struct {
 	Database    DatabaseConfig    `yaml:"database" mapstructure:"database"`
 	Git         GitConfig         `yaml:"git" mapstructure:"git"`
 	GitHubOAuth GitHubOAuthConfig `yaml:"github_oauth" mapstructure:"github_oauth"`
+	Cloudflare  CloudflareConfig  `yaml:"cloudflare" mapstructure:"cloudflare"`
 	Docker      DockerConfig      `yaml:"docker" mapstructure:"docker"`
 	Apps        []AppConfig       `yaml:"apps" mapstructure:"apps"`
 }
@@ -37,6 +38,13 @@ type GitConfig struct {
 type GitHubOAuthConfig struct {
 	ClientID     string `yaml:"client_id" mapstructure:"client_id"`
 	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
+}
+
+// CloudflareConfig holds Cloudflare Tunnel settings
+type CloudflareConfig struct {
+	TunnelToken string `yaml:"tunnel_token" mapstructure:"tunnel_token"`
+	TunnelID    string `yaml:"tunnel_id" mapstructure:"tunnel_id"`
+	Domain      string `yaml:"domain" mapstructure:"domain"` // e.g., "slats.dev"
 }
 
 // DockerConfig holds Docker client settings
@@ -72,7 +80,7 @@ func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host: "0.0.0.0",
-			Port: 8080,
+			Port: 7123,
 		},
 		Database: DatabaseConfig{
 			Path: "./data/homelab-cd.db",

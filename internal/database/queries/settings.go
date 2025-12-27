@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
+	"schooner/internal/crypto"
 )
 
 // Setting represents a key-value setting
@@ -18,12 +20,18 @@ type Setting struct {
 
 // SettingsQueries provides database operations for settings
 type SettingsQueries struct {
-	db *sqlx.DB
+	db        *sqlx.DB
+	encryptor *crypto.Encryptor
 }
 
 // NewSettingsQueries creates a new SettingsQueries instance
 func NewSettingsQueries(db *sqlx.DB) *SettingsQueries {
-	return &SettingsQueries{db: db}
+	encryptor, err := crypto.NewEncryptor()
+	if err != nil {
+		// Log but continue - encryption will fail gracefully
+		fmt.Printf("Warning: encryption not available: %v\n", err)
+	}
+	return &SettingsQueries{db: db, encryptor: encryptor}
 }
 
 // Get retrieves a setting by key
@@ -39,11 +47,32 @@ func (q *SettingsQueries) Get(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("failed to get setting: %w", err)
 	}
 
+	// Decrypt sensitive values
+	if crypto.IsSensitiveKey(key) && q.encryptor != nil && value != "" {
+		decrypted, err := q.encryptor.Decrypt(value)
+		if err != nil {
+			// If decryption fails, the value might be stored in plain text (legacy)
+			// Return as-is to allow migration
+			return value, nil
+		}
+		return decrypted, nil
+	}
+
 	return value, nil
 }
 
 // Set creates or updates a setting
 func (q *SettingsQueries) Set(ctx context.Context, key, value string) error {
+	// Encrypt sensitive values
+	storeValue := value
+	if crypto.IsSensitiveKey(key) && q.encryptor != nil && value != "" {
+		encrypted, err := q.encryptor.Encrypt(value)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt value: %w", err)
+		}
+		storeValue = encrypted
+	}
+
 	query := `
 		INSERT INTO settings (key, value, updated_at)
 		VALUES (?, ?, ?)
@@ -51,7 +80,7 @@ func (q *SettingsQueries) Set(ctx context.Context, key, value string) error {
 			value = excluded.value,
 			updated_at = excluded.updated_at`
 
-	_, err := q.db.ExecContext(ctx, query, key, value, time.Now())
+	_, err := q.db.ExecContext(ctx, query, key, storeValue, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to set setting: %w", err)
 	}

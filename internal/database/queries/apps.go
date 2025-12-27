@@ -28,12 +28,12 @@ func (q *AppQueries) Create(ctx context.Context, app *models.App) error {
 			id, name, description, repo_url, branch, webhook_secret,
 			build_strategy, dockerfile_path, compose_file, build_context,
 			container_name, image_name, deploy_config, env_vars,
-			auto_deploy, enabled, created_at, updated_at
+			auto_deploy, enabled, subdomain, public_port, created_at, updated_at
 		) VALUES (
 			:id, :name, :description, :repo_url, :branch, :webhook_secret,
 			:build_strategy, :dockerfile_path, :compose_file, :build_context,
 			:container_name, :image_name, :deploy_config, :env_vars,
-			:auto_deploy, :enabled, :created_at, :updated_at
+			:auto_deploy, :enabled, :subdomain, :public_port, :created_at, :updated_at
 		)`
 
 	_, err := q.db.NamedExecContext(ctx, query, app)
@@ -170,6 +170,8 @@ func (q *AppQueries) Update(ctx context.Context, app *models.App) error {
 			env_vars = :env_vars,
 			auto_deploy = :auto_deploy,
 			enabled = :enabled,
+			subdomain = :subdomain,
+			public_port = :public_port,
 			updated_at = :updated_at
 		WHERE id = :id`
 

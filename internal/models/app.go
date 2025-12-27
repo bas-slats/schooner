@@ -2,9 +2,54 @@ package models
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"time"
 )
+
+// NullRawMessage is a json.RawMessage that handles NULL values from the database
+type NullRawMessage json.RawMessage
+
+// Scan implements the sql.Scanner interface
+func (n *NullRawMessage) Scan(value interface{}) error {
+	if value == nil {
+		*n = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		*n = NullRawMessage(v)
+	case string:
+		*n = NullRawMessage(v)
+	}
+	return nil
+}
+
+// Value implements the driver.Valuer interface
+func (n NullRawMessage) Value() (driver.Value, error) {
+	if n == nil {
+		return nil, nil
+	}
+	return []byte(n), nil
+}
+
+// MarshalJSON implements json.Marshaler
+func (n NullRawMessage) MarshalJSON() ([]byte, error) {
+	if n == nil {
+		return []byte("null"), nil
+	}
+	return json.RawMessage(n).MarshalJSON()
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (n *NullRawMessage) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*n = nil
+		return nil
+	}
+	*n = NullRawMessage(data)
+	return nil
+}
 
 // BuildStrategy represents the build method for an app
 type BuildStrategy string
@@ -29,11 +74,13 @@ type App struct {
 	BuildContext   string            `db:"build_context" json:"build_context"`
 	ContainerName  sql.NullString    `db:"container_name" json:"container_name"`
 	ImageName      sql.NullString    `db:"image_name" json:"image_name"`
-	DeployConfig   json.RawMessage   `db:"deploy_config" json:"deploy_config,omitempty"`
+	DeployConfig   NullRawMessage    `db:"deploy_config" json:"deploy_config,omitempty"`
 	EnvVarsJSON    sql.NullString    `db:"env_vars" json:"-"`
 	EnvVars        map[string]string `db:"-" json:"env_vars,omitempty"`
 	AutoDeploy     bool              `db:"auto_deploy" json:"auto_deploy"`
 	Enabled        bool              `db:"enabled" json:"enabled"`
+	Subdomain      sql.NullString    `db:"subdomain" json:"subdomain"`      // e.g., "myapp" for myapp.slats.dev
+	PublicPort     sql.NullInt64     `db:"public_port" json:"public_port"` // Port to expose via tunnel
 	CreatedAt      time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt      time.Time         `db:"updated_at" json:"updated_at"`
 }
@@ -68,6 +115,22 @@ func (a *App) GetWebhookSecret() string {
 		return a.WebhookSecret.String
 	}
 	return ""
+}
+
+// GetSubdomain returns subdomain or empty string
+func (a *App) GetSubdomain() string {
+	if a.Subdomain.Valid {
+		return a.Subdomain.String
+	}
+	return ""
+}
+
+// GetPublicPort returns public port or 0
+func (a *App) GetPublicPort() int {
+	if a.PublicPort.Valid {
+		return int(a.PublicPort.Int64)
+	}
+	return 0
 }
 
 // LoadEnvVars parses the JSON env vars into the map

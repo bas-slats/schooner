@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"schooner/internal/cloudflare"
 	"schooner/internal/config"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
@@ -16,19 +17,21 @@ import (
 
 // PageHandler handles page rendering
 type PageHandler struct {
-	cfg          *config.Config
-	appQueries   *queries.AppQueries
-	buildQueries *queries.BuildQueries
-	dockerClient *docker.Client
+	cfg           *config.Config
+	appQueries    *queries.AppQueries
+	buildQueries  *queries.BuildQueries
+	dockerClient  *docker.Client
+	tunnelManager *cloudflare.Manager
 }
 
 // NewPageHandler creates a new PageHandler
-func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client) *PageHandler {
+func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager) *PageHandler {
 	return &PageHandler{
-		cfg:          cfg,
-		appQueries:   appQueries,
-		buildQueries: buildQueries,
-		dockerClient: dockerClient,
+		cfg:           cfg,
+		appQueries:    appQueries,
+		buildQueries:  buildQueries,
+		dockerClient:  dockerClient,
+		tunnelManager: tunnelManager,
 	}
 }
 
@@ -41,6 +44,7 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, title string) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>%s | Schooner</title>
     <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/js/htmx.min.js"></script>
     <link href="/static/css/styles.css" rel="stylesheet">
 </head>
@@ -298,7 +302,9 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
                 image_name: formData.get('image_name'),
                 env_vars: parseEnvVars(formData.get('env_vars')),
                 auto_deploy: formData.get('auto_deploy') === 'on',
-                enabled: formData.get('enabled') === 'on'
+                enabled: formData.get('enabled') === 'on',
+                subdomain: formData.get('subdomain') || '',
+                public_port: parseInt(formData.get('public_port')) || 0
             };
 
             fetch('/api/apps', {
@@ -334,7 +340,9 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
                 image_name: formData.get('image_name'),
                 env_vars: parseEnvVars(formData.get('env_vars')),
                 auto_deploy: formData.get('auto_deploy') === 'on',
-                enabled: formData.get('enabled') === 'on'
+                enabled: formData.get('enabled') === 'on',
+                subdomain: formData.get('subdomain') || '',
+                public_port: parseInt(formData.get('public_port')) || 0
             };
 
             fetch('/api/apps/' + appId, {
@@ -379,10 +387,10 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `
         <div class="bg-white shadow-sm rounded-lg p-8 border border-gray-200 text-center">
             <p class="text-gray-500 mb-4">No applications configured yet.</p>
-            <a href="/settings" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded inline-block">Add Your First App</a>
+            <a href="/settings" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded inline-block text-white">Add Your First App</a>
         </div>`)
 	} else {
-		fmt.Fprint(w, `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="apps">`)
+		fmt.Fprint(w, `<div class="grid grid-cols-1 lg:grid-cols-2 gap-6" id="apps">`)
 		for _, app := range apps {
 			latestBuild, _ := h.buildQueries.GetLatestByAppID(ctx, app.ID)
 			var containerStatus *docker.ContainerStatus
@@ -459,6 +467,30 @@ func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, late
 		}
 	}
 
+	// Status circle - based on container status if available, otherwise build status
+	statusCircle := `<span class="w-3 h-3 rounded-full bg-gray-300 mr-3"></span>` // default gray
+	if containerStatus != nil {
+		switch containerStatus.State {
+		case "running":
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-green-500 mr-3"></span>`
+		case "exited":
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-gray-400 mr-3"></span>`
+		case "restarting":
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-yellow-500 mr-3 animate-pulse"></span>`
+		default:
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-gray-400 mr-3"></span>`
+		}
+	} else if latestBuild != nil {
+		switch latestBuild.Status {
+		case models.BuildStatusSuccess:
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-green-500 mr-3"></span>`
+		case models.BuildStatusFailed:
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-red-500 mr-3"></span>`
+		case models.BuildStatusBuilding, models.BuildStatusCloning, models.BuildStatusDeploying:
+			statusCircle = `<span class="w-3 h-3 rounded-full bg-blue-500 mr-3 animate-pulse"></span>`
+		}
+	}
+
 	enabledBadge := ""
 	if !app.Enabled {
 		enabledBadge = `<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700 ml-2">Disabled</span>`
@@ -516,7 +548,10 @@ func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, late
 	fmt.Fprintf(w, `
             <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold">%s</h3>
+                    <div class="flex items-center">
+                        %s
+                        <h3 class="text-lg font-semibold">%s</h3>
+                    </div>
                     <div class="flex items-center">
                         <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
                         %s
@@ -535,12 +570,13 @@ func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, late
                         hx-swap="none">
                         Deploy
                     </button>
-                    <a href="/apps/%s" class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200">
+                    <a href="/apps/%s" class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200 text-gray-700">
                         Details
                     </a>
                     %s
                 </div>
             </div>`,
+		statusCircle,
 		html.EscapeString(app.Name),
 		statusClass,
 		html.EscapeString(buildStatus),
@@ -582,7 +618,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
                 <h1 class="text-2xl font-bold">%s</h1>
             </div>
             <button
-                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
                 hx-post="/api/apps/%s/deploy"
                 hx-swap="none">
                 Deploy Now
@@ -769,7 +805,7 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
                         <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                         Import from GitHub
                     </button>
-                    <button id="add-app-btn" onclick="showAddForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded">
+                    <button id="add-app-btn" onclick="showAddForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">
                         Add Application
                     </button>
                 </div>
@@ -816,6 +852,9 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
 
 	// GitHub Integration
 	h.renderGitHubIntegration(w)
+
+	// Cloudflare Tunnel
+	h.renderTunnelSettings(w)
 
 	// Import modal
 	h.renderImportModal(w)
@@ -929,6 +968,140 @@ func (h *PageHandler) renderGitHubIntegration(w http.ResponseWriter) {
         </script>`)
 }
 
+func (h *PageHandler) renderTunnelSettings(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div class="mt-8">
+            <h2 class="text-xl font-bold mb-4">Cloudflare Tunnel</h2>
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <p class="text-gray-500 mb-4">Configure a Cloudflare Tunnel to expose your apps to the internet securely.</p>
+
+                <div id="tunnel-status-display" class="mb-4 hidden">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                        <div class="flex items-center">
+                            <span id="tunnel-status-indicator" class="w-3 h-3 rounded-full mr-3"></span>
+                            <span id="tunnel-status-text" class="text-sm"></span>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button id="tunnel-start-btn" onclick="startTunnel()" class="hidden px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm text-white">Start</button>
+                            <button id="tunnel-stop-btn" onclick="stopTunnel()" class="hidden px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white">Stop</button>
+                        </div>
+                    </div>
+                </div>
+
+                <form onsubmit="submitTunnelConfig(event)">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm text-gray-500 mb-1">Tunnel Token</label>
+                            <input type="password" name="tunnel_token" id="tunnel-token-input"
+                                placeholder="eyJhIjoiNTg2NjA..."
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                            <p class="text-xs text-gray-400 mt-1">Get your tunnel token from the Cloudflare Zero Trust dashboard</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Domain</label>
+                            <input type="text" name="domain" id="tunnel-domain-input"
+                                placeholder="example.com"
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                            <p class="text-xs text-gray-400 mt-1">Your domain managed by Cloudflare</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Tunnel ID (optional)</label>
+                            <input type="text" name="tunnel_id" id="tunnel-id-input"
+                                placeholder="abc123..."
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save Tunnel Config</button>
+                </form>
+
+                <div class="mt-6 pt-6 border-t border-gray-200">
+                    <h4 class="text-sm font-semibold mb-2">How it works</h4>
+                    <ul class="text-sm text-gray-500 space-y-1 list-disc list-inside">
+                        <li>Schooner will run cloudflared as a sidecar container</li>
+                        <li>Configure subdomain and port in each app's settings</li>
+                        <li>Apps will be exposed at subdomain.yourdomain.com</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <script>
+            // Load tunnel status on page load
+            fetch('/api/settings/tunnel-status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDisplay = document.getElementById('tunnel-status-display');
+                    const indicator = document.getElementById('tunnel-status-indicator');
+                    const statusText = document.getElementById('tunnel-status-text');
+                    const startBtn = document.getElementById('tunnel-start-btn');
+                    const stopBtn = document.getElementById('tunnel-stop-btn');
+                    const domainInput = document.getElementById('tunnel-domain-input');
+
+                    if (data.domain) {
+                        domainInput.value = data.domain;
+                    }
+
+                    if (data.configured) {
+                        statusDisplay.classList.remove('hidden');
+                        if (data.running) {
+                            indicator.className = 'w-3 h-3 rounded-full mr-3 bg-green-500';
+                            statusText.textContent = 'Tunnel is running';
+                            stopBtn.classList.remove('hidden');
+                        } else {
+                            indicator.className = 'w-3 h-3 rounded-full mr-3 bg-gray-400';
+                            statusText.textContent = 'Tunnel is stopped';
+                            startBtn.classList.remove('hidden');
+                        }
+                    }
+                });
+
+            function submitTunnelConfig(event) {
+                event.preventDefault();
+                const form = event.target;
+                const data = {
+                    tunnel_token: form.querySelector('input[name="tunnel_token"]').value,
+                    domain: form.querySelector('input[name="domain"]').value,
+                    tunnel_id: form.querySelector('input[name="tunnel_id"]').value
+                };
+
+                fetch('/api/settings/tunnel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('Tunnel configuration saved');
+                        window.location.reload();
+                    } else {
+                        response.text().then(text => alert('Failed to save: ' + text));
+                    }
+                });
+            }
+
+            function startTunnel() {
+                fetch('/api/settings/tunnel/start', { method: 'POST' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            response.text().then(text => alert('Failed to start tunnel: ' + text));
+                        }
+                    });
+            }
+
+            function stopTunnel() {
+                fetch('/api/settings/tunnel/stop', { method: 'POST' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            response.text().then(text => alert('Failed to stop tunnel: ' + text));
+                        }
+                    });
+            }
+        </script>`)
+}
+
 func (h *PageHandler) renderImportModal(w http.ResponseWriter) {
 	fmt.Fprint(w, `
         <div id="import-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -974,8 +1147,8 @@ func (h *PageHandler) renderImportModal(w http.ResponseWriter) {
                             </label>
                         </div>
                         <div class="flex justify-end space-x-2">
-                            <button type="button" onclick="hideImportModal()" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded">Cancel</button>
-                            <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded">Import & Deploy</button>
+                            <button type="button" onclick="hideImportModal()" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded text-gray-700 border border-gray-200">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Import & Deploy</button>
                         </div>
                     </form>
                 </div>
@@ -1035,6 +1208,21 @@ func (h *PageHandler) renderAddAppForm(w http.ResponseWriter) {
                         <div>
                             <label class="block text-sm text-gray-500 mb-1">Image Name</label>
                             <input type="text" name="image_name" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div class="col-span-2 border-t border-gray-200 pt-4 mt-2">
+                            <h4 class="text-sm font-semibold text-gray-600 mb-3">Cloudflare Tunnel (Optional)</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Subdomain</label>
+                                    <input type="text" name="subdomain" placeholder="myapp" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                    <p class="text-xs text-gray-400 mt-1">e.g., myapp for myapp.yourdomain.com</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Public Port</label>
+                                    <input type="number" name="public_port" placeholder="8080" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                    <p class="text-xs text-gray-400 mt-1">Container port to expose via tunnel</p>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-span-2">
                             <label class="block text-sm text-gray-500 mb-1">Environment Variables</label>
@@ -1130,6 +1318,21 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
                                     <label class="block text-sm text-gray-500 mb-1">Image Name</label>
                                     <input type="text" name="image_name" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
                                 </div>
+                                <div class="col-span-2 border-t border-gray-200 pt-4 mt-2">
+                                    <h4 class="text-sm font-semibold text-gray-600 mb-3">Cloudflare Tunnel (Optional)</h4>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm text-gray-500 mb-1">Subdomain</label>
+                                            <input type="text" name="subdomain" value="%s" placeholder="myapp" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                            <p class="text-xs text-gray-400 mt-1">e.g., myapp for myapp.yourdomain.com</p>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm text-gray-500 mb-1">Public Port</label>
+                                            <input type="number" name="public_port" value="%s" placeholder="8080" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                            <p class="text-xs text-gray-400 mt-1">Container port to expose via tunnel</p>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div class="col-span-2">
                                     <label class="block text-sm text-gray-500 mb-1">Environment Variables</label>
                                     <textarea name="env_vars" rows="3" placeholder="KEY=value&#10;ANOTHER_KEY=another_value" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900 font-mono text-sm">%s</textarea>
@@ -1149,7 +1352,7 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
                             <div class="flex justify-between mt-4">
                                 <button type="button" onclick="confirmDelete('%s', '%s')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white">Delete</button>
                                 <div class="flex space-x-2">
-                                    <button type="button" onclick="toggleEditForm('%s')" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200">Cancel</button>
+                                    <button type="button" onclick="toggleEditForm('%s')" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 text-gray-700">Cancel</button>
                                     <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save Changes</button>
                                 </div>
                             </div>
@@ -1176,6 +1379,8 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
 		html.EscapeString(app.BuildContext),
 		html.EscapeString(app.GetContainerName()),
 		html.EscapeString(app.GetImageName()),
+		html.EscapeString(app.GetSubdomain()),
+		formatPort(app.GetPublicPort()),
 		html.EscapeString(app.GetEnvVarsAsString()),
 		checked(app.AutoDeploy),
 		checked(app.Enabled),
@@ -1203,4 +1408,11 @@ func selected(b bool) string {
 		return "selected"
 	}
 	return ""
+}
+
+func formatPort(port int) string {
+	if port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", port)
 }

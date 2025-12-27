@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"schooner/internal/cloudflare"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
 	"schooner/internal/models"
@@ -17,17 +18,19 @@ import (
 
 // AppHandler handles app-related requests
 type AppHandler struct {
-	appQueries   *queries.AppQueries
-	buildQueries *queries.BuildQueries
-	dockerClient *docker.Client
+	appQueries    *queries.AppQueries
+	buildQueries  *queries.BuildQueries
+	dockerClient  *docker.Client
+	tunnelManager *cloudflare.Manager
 }
 
 // NewAppHandler creates a new AppHandler
-func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client) *AppHandler {
+func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager) *AppHandler {
 	return &AppHandler{
-		appQueries:   appQueries,
-		buildQueries: buildQueries,
-		dockerClient: dockerClient,
+		appQueries:    appQueries,
+		buildQueries:  buildQueries,
+		dockerClient:  dockerClient,
+		tunnelManager: tunnelManager,
 	}
 }
 
@@ -47,6 +50,8 @@ type AppCreateRequest struct {
 	EnvVars        map[string]string `json:"env_vars"`
 	AutoDeploy     bool              `json:"auto_deploy"`
 	Enabled        bool              `json:"enabled"`
+	Subdomain      string            `json:"subdomain"`
+	PublicPort     int               `json:"public_port"`
 }
 
 // List handles GET /api/apps
@@ -139,6 +144,8 @@ func (h *AppHandler) Create(w http.ResponseWriter, r *http.Request) {
 		EnvVars:        req.EnvVars,
 		AutoDeploy:     req.AutoDeploy,
 		Enabled:        req.Enabled,
+		Subdomain:      sql.NullString{String: req.Subdomain, Valid: req.Subdomain != ""},
+		PublicPort:     sql.NullInt64{Int64: int64(req.PublicPort), Valid: req.PublicPort > 0},
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -154,6 +161,13 @@ func (h *AppHandler) Create(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to create app", "error", err)
 		http.Error(w, "failed to create app: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Update tunnel routes if configured
+	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
+		if err := h.tunnelManager.AddRoute(ctx, app); err != nil {
+			slog.Warn("failed to add tunnel route", "app", app.Name, "error", err)
+		}
 	}
 
 	slog.Info("app created", "id", app.ID, "name", app.Name)
@@ -216,6 +230,8 @@ func (h *AppHandler) Update(w http.ResponseWriter, r *http.Request) {
 	app.EnvVars = req.EnvVars
 	app.AutoDeploy = req.AutoDeploy
 	app.Enabled = req.Enabled
+	app.Subdomain = sql.NullString{String: req.Subdomain, Valid: req.Subdomain != ""}
+	app.PublicPort = sql.NullInt64{Int64: int64(req.PublicPort), Valid: req.PublicPort > 0}
 
 	// Save env vars
 	if err := app.SaveEnvVars(); err != nil {
@@ -228,6 +244,13 @@ func (h *AppHandler) Update(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to update app", "error", err)
 		http.Error(w, "failed to update app: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Update tunnel routes if configured
+	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
+		if err := h.tunnelManager.AddRoute(ctx, app); err != nil {
+			slog.Warn("failed to update tunnel route", "app", app.Name, "error", err)
+		}
 	}
 
 	slog.Info("app updated", "id", app.ID, "name", app.Name)
@@ -252,6 +275,13 @@ func (h *AppHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if app == nil {
 		http.Error(w, "app not found", http.StatusNotFound)
 		return
+	}
+
+	// Remove tunnel route if configured
+	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
+		if err := h.tunnelManager.RemoveRoute(ctx, app); err != nil {
+			slog.Warn("failed to remove tunnel route", "app", app.Name, "error", err)
+		}
 	}
 
 	if err := h.appQueries.Delete(ctx, appID); err != nil {
