@@ -773,7 +773,6 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
                     .catch(err => console.error('Failed to load container stats:', err));
             }
             loadContainerStats();
-            setInterval(loadContainerStats, 5000);
         </script>`)
 }
 

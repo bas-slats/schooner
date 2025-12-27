@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -584,12 +585,14 @@ func (h *AppHandler) AllStatuses(w http.ResponseWriter, r *http.Request) {
 
 // ContainerStats handles GET /api/containers/stats - returns stats for all running containers
 func (h *AppHandler) ContainerStats(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	if h.dockerClient == nil {
 		http.Error(w, "Docker client not available", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Use a short timeout for the stats collection
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	containers, err := h.dockerClient.ListContainers(ctx, false, nil)
 	if err != nil {
@@ -607,30 +610,55 @@ func (h *AppHandler) ContainerStats(w http.ResponseWriter, r *http.Request) {
 		MemoryDisplay string  `json:"memory_display"`
 	}
 
-	stats := make([]ContainerStat, 0, len(containers))
+	// Fetch stats concurrently
+	type result struct {
+		stat ContainerStat
+		ok   bool
+	}
+	results := make(chan result, len(containers))
+
 	for _, c := range containers {
-		name := ""
-		if len(c.Names) > 0 {
-			name = c.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
+		go func(c types.Container) {
+			name := ""
+			if len(c.Names) > 0 {
+				name = c.Names[0]
+				if len(name) > 0 && name[0] == '/' {
+					name = name[1:]
+				}
 			}
-		}
 
-		containerStats, err := h.dockerClient.GetContainerStats(ctx, c.ID)
-		if err != nil {
-			slog.Debug("failed to get container stats", "container", name, "error", err)
-			continue
-		}
+			containerStats, err := h.dockerClient.GetContainerStats(ctx, c.ID)
+			if err != nil {
+				slog.Debug("failed to get container stats", "container", name, "error", err)
+				results <- result{ok: false}
+				return
+			}
 
-		stats = append(stats, ContainerStat{
-			ID:            c.ID[:12],
-			Name:          name,
-			CPUPercent:    containerStats.CPUPercent,
-			MemoryUsage:   containerStats.MemoryUsage,
-			MemoryPercent: containerStats.MemoryPercent,
-			MemoryDisplay: formatBytes(containerStats.MemoryUsage),
-		})
+			results <- result{
+				stat: ContainerStat{
+					ID:            c.ID[:12],
+					Name:          name,
+					CPUPercent:    containerStats.CPUPercent,
+					MemoryUsage:   containerStats.MemoryUsage,
+					MemoryPercent: containerStats.MemoryPercent,
+					MemoryDisplay: formatBytes(containerStats.MemoryUsage),
+				},
+				ok: true,
+			}
+		}(c)
+	}
+
+	// Collect results
+	stats := make([]ContainerStat, 0, len(containers))
+	for i := 0; i < len(containers); i++ {
+		select {
+		case r := <-results:
+			if r.ok {
+				stats = append(stats, r.stat)
+			}
+		case <-ctx.Done():
+			break
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
