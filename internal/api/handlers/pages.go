@@ -189,11 +189,14 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
             document.getElementById('import-modal').classList.add('hidden');
         }
 
+        // Store repos globally for filtering
+        let allRepos = [];
+
         function loadGitHubRepos(page = 1) {
             const container = document.getElementById('github-repos-list');
             container.innerHTML = '<div class="text-center py-8 text-gray-500">Loading repositories...</div>';
 
-            fetch('/api/github/repos?page=' + page + '&per_page=20')
+            fetch('/api/github/repos?page=' + page + '&per_page=100')
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('Failed to fetch repositories');
@@ -201,36 +204,56 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
                     return response.json();
                 })
                 .then(repos => {
-                    if (repos.length === 0) {
-                        container.innerHTML = '<div class="text-center py-8 text-gray-500">No repositories found</div>';
-                        return;
-                    }
-
-                    let html = '';
-                    repos.forEach(repo => {
-                        const disabled = repo.already_imported ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 cursor-pointer';
-                        const imported = repo.already_imported ? '<span class="text-xs text-green-600 ml-2">Already imported</span>' : '';
-                        const badges = [];
-                        if (repo.has_dockerfile) badges.push('<span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Dockerfile</span>');
-                        if (repo.has_compose) badges.push('<span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">Compose</span>');
-
-                        html += '<div class="p-4 border-b border-gray-200 ' + disabled + '" ' +
-                            (repo.already_imported ? '' : 'onclick="selectRepo(\'' + repo.full_name + '\', \'' + repo.default_branch + '\', ' + repo.has_dockerfile + ', ' + repo.has_compose + ', \'' + (repo.compose_file || '') + '\')"') + '>' +
-                            '<div class="flex items-center justify-between">' +
-                            '<div>' +
-                            '<div class="font-semibold">' + escapeHtml(repo.name) + imported + '</div>' +
-                            '<div class="text-sm text-gray-500">' + escapeHtml(repo.description || 'No description') + '</div>' +
-                            '</div>' +
-                            '<div class="flex items-center space-x-2">' + badges.join('') + '</div>' +
-                            '</div>' +
-                            '</div>';
-                    });
-
-                    container.innerHTML = html;
+                    allRepos = repos;
+                    renderRepos(repos);
                 })
                 .catch(error => {
                     container.innerHTML = '<div class="text-center py-8 text-red-400">' + error.message + '</div>';
                 });
+        }
+
+        function filterRepos(query) {
+            query = query.toLowerCase().trim();
+            if (!query) {
+                renderRepos(allRepos);
+                return;
+            }
+            const filtered = allRepos.filter(repo =>
+                repo.name.toLowerCase().includes(query) ||
+                repo.full_name.toLowerCase().includes(query) ||
+                (repo.description && repo.description.toLowerCase().includes(query))
+            );
+            renderRepos(filtered);
+        }
+
+        function renderRepos(repos) {
+            const container = document.getElementById('github-repos-list');
+            if (repos.length === 0) {
+                container.innerHTML = '<div class="text-center py-8 text-gray-500">No repositories found</div>';
+                return;
+            }
+
+            let html = '';
+            repos.forEach(repo => {
+                const disabled = repo.already_imported ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 cursor-pointer';
+                const imported = repo.already_imported ? '<span class="text-xs text-green-600 ml-2">Already imported</span>' : '';
+                const badges = [];
+                if (repo.has_dockerfile) badges.push('<span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Dockerfile</span>');
+                if (repo.has_compose) badges.push('<span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">Compose</span>');
+
+                html += '<div class="p-4 border-b border-gray-200 ' + disabled + '" ' +
+                    (repo.already_imported ? '' : 'onclick="selectRepo(\'' + repo.full_name + '\', \'' + repo.default_branch + '\', ' + repo.has_dockerfile + ', ' + repo.has_compose + ', \'' + (repo.compose_file || '') + '\')"') + '>' +
+                    '<div class="flex items-center justify-between">' +
+                    '<div>' +
+                    '<div class="font-semibold">' + escapeHtml(repo.name) + imported + '</div>' +
+                    '<div class="text-sm text-gray-500">' + escapeHtml(repo.description || 'No description') + '</div>' +
+                    '</div>' +
+                    '<div class="flex items-center space-x-2">' + badges.join('') + '</div>' +
+                    '</div>' +
+                    '</div>';
+            });
+
+            container.innerHTML = html;
         }
 
         function selectRepo(fullName, defaultBranch, hasDockerfile, hasCompose, composeFile) {
@@ -620,20 +643,22 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
 	fmt.Fprint(w, `
         <h2 class="text-xl font-bold mt-10 mb-4">Docker Containers</h2>
         <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-            <table class="w-full">
+            <table class="w-full" id="containers-table">
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left text-sm">Name</th>
                         <th class="px-4 py-3 text-left text-sm">Image</th>
                         <th class="px-4 py-3 text-left text-sm">Status</th>
                         <th class="px-4 py-3 text-left text-sm">Health</th>
+                        <th class="px-4 py-3 text-left text-sm">CPU</th>
+                        <th class="px-4 py-3 text-left text-sm">Memory</th>
                         <th class="px-4 py-3 text-left text-sm">Ports</th>
                     </tr>
                 </thead>
                 <tbody>`)
 
 	if len(containers) == 0 {
-		fmt.Fprint(w, `<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No containers running</td></tr>`)
+		fmt.Fprint(w, `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No containers running</td></tr>`)
 	} else {
 		for _, c := range containers {
 			name := ""
@@ -693,21 +718,26 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
 			}
 
 			fmt.Fprintf(w, `
-                    <tr class="border-t border-gray-200">
+                    <tr class="border-t border-gray-200" data-container="%s">
                         <td class="px-4 py-3 text-sm font-medium">%s</td>
                         <td class="px-4 py-3 text-sm font-mono text-gray-600">%s</td>
                         <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
                         </td>
                         <td class="px-4 py-3 text-sm %s">%s</td>
+                        <td class="px-4 py-3 text-sm text-gray-500 cpu-stat" data-container="%s">-</td>
+                        <td class="px-4 py-3 text-sm text-gray-500 mem-stat" data-container="%s">-</td>
                         <td class="px-4 py-3 text-sm font-mono">%s</td>
                     </tr>`,
+				html.EscapeString(name),
 				html.EscapeString(name),
 				html.EscapeString(image),
 				statusClass,
 				html.EscapeString(c.State),
 				healthClass,
 				healthStatus,
+				html.EscapeString(name),
+				html.EscapeString(name),
 				html.EscapeString(ports))
 		}
 	}
@@ -715,7 +745,36 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
 	fmt.Fprint(w, `
                 </tbody>
             </table>
-        </div>`)
+        </div>
+        <script>
+            function loadContainerStats() {
+                fetch('/api/containers/stats')
+                    .then(response => response.json())
+                    .then(stats => {
+                        stats.forEach(stat => {
+                            const cpuCell = document.querySelector('.cpu-stat[data-container="' + stat.name + '"]');
+                            const memCell = document.querySelector('.mem-stat[data-container="' + stat.name + '"]');
+                            if (cpuCell) {
+                                cpuCell.textContent = stat.cpu_percent.toFixed(1) + '%';
+                                if (stat.cpu_percent > 80) cpuCell.className = 'px-4 py-3 text-sm text-red-600 cpu-stat';
+                                else if (stat.cpu_percent > 50) cpuCell.className = 'px-4 py-3 text-sm text-yellow-600 cpu-stat';
+                                else cpuCell.className = 'px-4 py-3 text-sm text-gray-600 cpu-stat';
+                                cpuCell.setAttribute('data-container', stat.name);
+                            }
+                            if (memCell) {
+                                memCell.textContent = stat.memory_display;
+                                if (stat.memory_percent > 80) memCell.className = 'px-4 py-3 text-sm text-red-600 mem-stat';
+                                else if (stat.memory_percent > 60) memCell.className = 'px-4 py-3 text-sm text-yellow-600 mem-stat';
+                                else memCell.className = 'px-4 py-3 text-sm text-gray-600 mem-stat';
+                                memCell.setAttribute('data-container', stat.name);
+                            }
+                        });
+                    })
+                    .catch(err => console.error('Failed to load container stats:', err));
+            }
+            loadContainerStats();
+            setInterval(loadContainerStats, 5000);
+        </script>`)
 }
 
 func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, latestBuild *models.Build, containerStatus *docker.ContainerStatus) {
@@ -1555,7 +1614,12 @@ func (h *PageHandler) renderImportModal(w http.ResponseWriter) {
                 </div>
 
                 <div id="repo-selection">
-                    <div id="github-repos-list" class="overflow-y-auto max-h-96">
+                    <div class="p-4 border-b border-gray-200">
+                        <input type="text" id="repo-search" placeholder="Search repositories..."
+                               class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900"
+                               oninput="filterRepos(this.value)">
+                    </div>
+                    <div id="github-repos-list" class="overflow-y-auto max-h-80">
                         <div class="text-center py-8 text-gray-500">Loading repositories...</div>
                     </div>
                 </div>

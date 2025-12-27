@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -579,4 +580,79 @@ func (h *AppHandler) AllStatuses(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(statuses)
+}
+
+// ContainerStats handles GET /api/containers/stats - returns stats for all running containers
+func (h *AppHandler) ContainerStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.dockerClient == nil {
+		http.Error(w, "Docker client not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	containers, err := h.dockerClient.ListContainers(ctx, false, nil)
+	if err != nil {
+		slog.Error("failed to list containers", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type ContainerStat struct {
+		ID            string  `json:"id"`
+		Name          string  `json:"name"`
+		CPUPercent    float64 `json:"cpu_percent"`
+		MemoryUsage   uint64  `json:"memory_usage"`
+		MemoryPercent float64 `json:"memory_percent"`
+		MemoryDisplay string  `json:"memory_display"`
+	}
+
+	stats := make([]ContainerStat, 0, len(containers))
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+
+		containerStats, err := h.dockerClient.GetContainerStats(ctx, c.ID)
+		if err != nil {
+			slog.Debug("failed to get container stats", "container", name, "error", err)
+			continue
+		}
+
+		stats = append(stats, ContainerStat{
+			ID:            c.ID[:12],
+			Name:          name,
+			CPUPercent:    containerStats.CPUPercent,
+			MemoryUsage:   containerStats.MemoryUsage,
+			MemoryPercent: containerStats.MemoryPercent,
+			MemoryDisplay: formatBytes(containerStats.MemoryUsage),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// formatBytes formats bytes to human readable string
+func formatBytes(bytes uint64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }

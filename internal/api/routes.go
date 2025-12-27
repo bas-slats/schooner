@@ -198,6 +198,9 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 
 		// System health
 		r.Get("/health/system", healthHandler.GetSystemHealth)
+
+		// Container stats
+		r.Get("/containers/stats", appHandler.ContainerStats)
 	})
 
 	return r

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -197,6 +198,50 @@ func (c *Client) GetContainerLogs(ctx context.Context, nameOrID string, tail str
 		Tail:       tail,
 		Timestamps: true,
 	})
+}
+
+// ContainerStats holds container resource usage stats
+type ContainerStats struct {
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryUsage   uint64  `json:"memory_usage"`
+	MemoryLimit   uint64  `json:"memory_limit"`
+	MemoryPercent float64 `json:"memory_percent"`
+}
+
+// GetContainerStats retrieves container resource usage statistics
+func (c *Client) GetContainerStats(ctx context.Context, nameOrID string) (*ContainerStats, error) {
+	statsResponse, err := c.cli.ContainerStats(ctx, nameOrID, false)
+	if err != nil {
+		return nil, err
+	}
+	defer statsResponse.Body.Close()
+
+	var stats types.StatsJSON
+	decoder := json.NewDecoder(statsResponse.Body)
+	if err := decoder.Decode(&stats); err != nil {
+		return nil, err
+	}
+
+	// Calculate CPU percentage
+	cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
+	cpuPercent := 0.0
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(len(stats.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+	}
+
+	// Calculate memory percentage
+	memoryPercent := 0.0
+	if stats.MemoryStats.Limit > 0 {
+		memoryPercent = float64(stats.MemoryStats.Usage) / float64(stats.MemoryStats.Limit) * 100.0
+	}
+
+	return &ContainerStats{
+		CPUPercent:    cpuPercent,
+		MemoryUsage:   stats.MemoryStats.Usage,
+		MemoryLimit:   stats.MemoryStats.Limit,
+		MemoryPercent: memoryPercent,
+	}, nil
 }
 
 // BuildImage builds a Docker image
