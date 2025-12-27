@@ -15,25 +15,28 @@ import (
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
 	"schooner/internal/models"
+	"schooner/internal/observability"
 )
 
 // PageHandler handles page rendering
 type PageHandler struct {
-	cfg           *config.Config
-	appQueries    *queries.AppQueries
-	buildQueries  *queries.BuildQueries
-	dockerClient  *docker.Client
-	tunnelManager *cloudflare.Manager
+	cfg                  *config.Config
+	appQueries           *queries.AppQueries
+	buildQueries         *queries.BuildQueries
+	dockerClient         *docker.Client
+	tunnelManager        *cloudflare.Manager
+	observabilityManager *observability.Manager
 }
 
 // NewPageHandler creates a new PageHandler
-func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager) *PageHandler {
+func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager, observabilityManager *observability.Manager) *PageHandler {
 	return &PageHandler{
-		cfg:           cfg,
-		appQueries:    appQueries,
-		buildQueries:  buildQueries,
-		dockerClient:  dockerClient,
-		tunnelManager: tunnelManager,
+		cfg:                  cfg,
+		appQueries:           appQueries,
+		buildQueries:         buildQueries,
+		dockerClient:         dockerClient,
+		tunnelManager:        tunnelManager,
+		observabilityManager: observabilityManager,
 	}
 }
 
@@ -960,6 +963,9 @@ func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
 	// Cloudflare Tunnel
 	h.renderTunnelSettings(w)
 
+	// Observability (Loki + Grafana)
+	h.renderObservabilitySettings(w)
+
 	// Import modal
 	h.renderImportModal(w)
 
@@ -1200,6 +1206,180 @@ func (h *PageHandler) renderTunnelSettings(w http.ResponseWriter) {
                             window.location.reload();
                         } else {
                             response.text().then(text => alert('Failed to stop tunnel: ' + text));
+                        }
+                    });
+            }
+        </script>`)
+}
+
+func (h *PageHandler) renderObservabilitySettings(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div class="mt-8">
+            <h2 class="text-xl font-bold mb-4">Log Aggregation (Loki + Grafana)</h2>
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <p class="text-gray-500 mb-4">Deploy a managed Loki + Grafana stack to aggregate logs from all Schooner-managed containers.</p>
+
+                <div id="observability-status-display" class="mb-4 hidden">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                        <div class="flex items-center">
+                            <span id="observability-status-indicator" class="w-3 h-3 rounded-full mr-3"></span>
+                            <span id="observability-status-text" class="text-sm"></span>
+                        </div>
+                        <div class="flex space-x-2">
+                            <a id="grafana-link" href="#" target="_blank" class="hidden px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm text-white">Open Grafana</a>
+                            <button id="observability-start-btn" onclick="startObservability()" class="hidden px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm text-white">Start</button>
+                            <button id="observability-stop-btn" onclick="stopObservability()" class="hidden px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white">Stop</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="observability-services" class="mb-4 hidden">
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="p-2 bg-gray-50 rounded text-center">
+                            <span class="text-xs text-gray-500">Loki</span>
+                            <div id="loki-status" class="text-sm font-medium">-</div>
+                        </div>
+                        <div class="p-2 bg-gray-50 rounded text-center">
+                            <span class="text-xs text-gray-500">Promtail</span>
+                            <div id="promtail-status" class="text-sm font-medium">-</div>
+                        </div>
+                        <div class="p-2 bg-gray-50 rounded text-center">
+                            <span class="text-xs text-gray-500">Grafana</span>
+                            <div id="grafana-status" class="text-sm font-medium">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <form onsubmit="submitObservabilityConfig(event)">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Grafana Port</label>
+                            <input type="number" name="grafana_port" id="grafana-port-input" value="3000"
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Log Retention</label>
+                            <select name="loki_retention" id="loki-retention-input" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                <option value="72h">3 days</option>
+                                <option value="168h" selected>7 days</option>
+                                <option value="336h">14 days</option>
+                                <option value="720h">30 days</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save & Start</button>
+                    </div>
+                </form>
+
+                <div class="mt-6 pt-6 border-t border-gray-200">
+                    <h4 class="text-sm font-semibold mb-2">What gets deployed</h4>
+                    <ul class="text-sm text-gray-500 space-y-1 list-disc list-inside">
+                        <li><strong>Loki</strong> - Log aggregation database</li>
+                        <li><strong>Promtail</strong> - Log collector (reads from Docker)</li>
+                        <li><strong>Grafana</strong> - Log visualization dashboard</li>
+                    </ul>
+                    <p class="text-xs text-gray-400 mt-2">Only logs from containers with the <code class="bg-gray-100 px-1 rounded">schooner.managed=true</code> label will be collected.</p>
+                </div>
+            </div>
+        </div>
+        <script>
+            // Load observability status on page load
+            function loadObservabilityStatus() {
+                fetch('/api/settings/observability-status')
+                    .then(response => response.json())
+                    .then(data => {
+                        const statusDisplay = document.getElementById('observability-status-display');
+                        const servicesDisplay = document.getElementById('observability-services');
+                        const statusIndicator = document.getElementById('observability-status-indicator');
+                        const statusText = document.getElementById('observability-status-text');
+                        const startBtn = document.getElementById('observability-start-btn');
+                        const stopBtn = document.getElementById('observability-stop-btn');
+                        const grafanaLink = document.getElementById('grafana-link');
+
+                        if (data.available) {
+                            statusDisplay.classList.remove('hidden');
+
+                            if (data.running) {
+                                statusIndicator.classList.add('bg-green-500');
+                                statusIndicator.classList.remove('bg-gray-300', 'bg-yellow-500');
+                                statusText.textContent = 'Stack running';
+                                startBtn.classList.add('hidden');
+                                stopBtn.classList.remove('hidden');
+
+                                if (data.grafana_url) {
+                                    grafanaLink.href = data.grafana_url;
+                                    grafanaLink.classList.remove('hidden');
+                                }
+
+                                servicesDisplay.classList.remove('hidden');
+                                document.getElementById('loki-status').textContent = data.loki_status || '-';
+                                document.getElementById('promtail-status').textContent = data.promtail_status || '-';
+                                document.getElementById('grafana-status').textContent = data.grafana_status || '-';
+                            } else if (data.enabled) {
+                                statusIndicator.classList.add('bg-yellow-500');
+                                statusIndicator.classList.remove('bg-gray-300', 'bg-green-500');
+                                statusText.textContent = 'Enabled but not running';
+                                startBtn.classList.remove('hidden');
+                                stopBtn.classList.add('hidden');
+                                grafanaLink.classList.add('hidden');
+                                servicesDisplay.classList.add('hidden');
+                            } else {
+                                statusIndicator.classList.add('bg-gray-300');
+                                statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500');
+                                statusText.textContent = 'Not configured';
+                                startBtn.classList.remove('hidden');
+                                stopBtn.classList.add('hidden');
+                                grafanaLink.classList.add('hidden');
+                                servicesDisplay.classList.add('hidden');
+                            }
+                        }
+                    });
+            }
+            loadObservabilityStatus();
+
+            function submitObservabilityConfig(event) {
+                event.preventDefault();
+                const port = document.getElementById('grafana-port-input').value;
+                const retention = document.getElementById('loki-retention-input').value;
+
+                fetch('/api/settings/observability', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: true,
+                        grafana_port: parseInt(port),
+                        loki_retention: retention
+                    })
+                })
+                .then(response => {
+                    if (response.ok) {
+                        // Start the stack after saving config
+                        startObservability();
+                    } else {
+                        response.text().then(text => alert('Failed to save: ' + text));
+                    }
+                });
+            }
+
+            function startObservability() {
+                fetch('/api/settings/observability/start', { method: 'POST' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            response.text().then(text => alert('Failed to start: ' + text));
+                        }
+                    });
+            }
+
+            function stopObservability() {
+                fetch('/api/settings/observability/stop', { method: 'POST' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            response.text().then(text => alert('Failed to stop: ' + text));
                         }
                     });
             }

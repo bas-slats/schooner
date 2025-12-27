@@ -245,6 +245,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 			Env:           envMapToSlice(app.EnvVars),
 			RestartPolicy: "unless-stopped",
 			Labels: map[string]string{
+				"schooner.managed":  "true",
 				"schooner.app":      app.Name,
 				"schooner.app-id":   app.ID,
 				"schooner.build-id": build.ID,

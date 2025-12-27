@@ -4,13 +4,14 @@ import "time"
 
 // Config represents the application configuration
 type Config struct {
-	Server      ServerConfig      `yaml:"server" mapstructure:"server"`
-	Database    DatabaseConfig    `yaml:"database" mapstructure:"database"`
-	Git         GitConfig         `yaml:"git" mapstructure:"git"`
-	GitHubOAuth GitHubOAuthConfig `yaml:"github_oauth" mapstructure:"github_oauth"`
-	Cloudflare  CloudflareConfig  `yaml:"cloudflare" mapstructure:"cloudflare"`
-	Docker      DockerConfig      `yaml:"docker" mapstructure:"docker"`
-	Apps        []AppConfig       `yaml:"apps" mapstructure:"apps"`
+	Server        ServerConfig        `yaml:"server" mapstructure:"server"`
+	Database      DatabaseConfig      `yaml:"database" mapstructure:"database"`
+	Git           GitConfig           `yaml:"git" mapstructure:"git"`
+	GitHubOAuth   GitHubOAuthConfig   `yaml:"github_oauth" mapstructure:"github_oauth"`
+	Cloudflare    CloudflareConfig    `yaml:"cloudflare" mapstructure:"cloudflare"`
+	Observability ObservabilityConfig `yaml:"observability" mapstructure:"observability"`
+	Docker        DockerConfig        `yaml:"docker" mapstructure:"docker"`
+	Apps          []AppConfig         `yaml:"apps" mapstructure:"apps"`
 }
 
 // ServerConfig holds HTTP server settings
@@ -45,6 +46,14 @@ type CloudflareConfig struct {
 	TunnelToken string `yaml:"tunnel_token" mapstructure:"tunnel_token"`
 	TunnelID    string `yaml:"tunnel_id" mapstructure:"tunnel_id"`
 	Domain      string `yaml:"domain" mapstructure:"domain"` // e.g., "slats.dev"
+}
+
+// ObservabilityConfig holds Loki/Grafana log aggregation settings
+type ObservabilityConfig struct {
+	Enabled       bool   `yaml:"enabled" mapstructure:"enabled"`
+	GrafanaPort   int    `yaml:"grafana_port" mapstructure:"grafana_port"`     // Default: 3000
+	LokiRetention string `yaml:"loki_retention" mapstructure:"loki_retention"` // Default: "168h" (7 days)
+	DataDir       string `yaml:"data_dir" mapstructure:"data_dir"`             // Default: "/data/observability"
 }
 
 // DockerConfig holds Docker client settings

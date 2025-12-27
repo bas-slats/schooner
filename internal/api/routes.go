@@ -19,6 +19,7 @@ import (
 	"schooner/internal/docker"
 	"schooner/internal/git"
 	"schooner/internal/github"
+	"schooner/internal/observability"
 )
 
 // NewRouter creates and configures the HTTP router
@@ -80,13 +81,21 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 		tunnelManager.SetSettingsQueries(settingsQueries)
 	}
 
+	// Initialize observability manager (Loki + Grafana)
+	var observabilityManager *observability.Manager
+	if dockerClient != nil {
+		observabilityManager = observability.NewManager(cfg, dockerClient)
+		observabilityManager.SetSettingsQueries(settingsQueries)
+	}
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	webhookHandler := handlers.NewWebhookHandler(cfg, appQueries, buildQueries, logQueries)
 	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient, tunnelManager, orchestrator)
 	buildHandler := handlers.NewBuildHandler(buildQueries, logQueries)
-	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager)
-	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager)
+	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, observabilityManager)
+	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager, observabilityManager)
+	logsHandler := handlers.NewLogsHandler(observabilityManager, appQueries)
 	importHandler := handlers.NewImportHandler(githubClient, appQueries)
 	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient, sessionStore)
 
@@ -166,6 +175,19 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 			r.Post("/tunnel", settingsHandler.SetTunnelConfig)
 			r.Post("/tunnel/start", settingsHandler.StartTunnel)
 			r.Post("/tunnel/stop", settingsHandler.StopTunnel)
+
+			// Observability (Loki + Grafana)
+			r.Get("/observability-status", settingsHandler.GetObservabilityStatus)
+			r.Post("/observability", settingsHandler.SetObservabilityConfig)
+			r.Post("/observability/start", settingsHandler.StartObservability)
+			r.Post("/observability/stop", settingsHandler.StopObservability)
+		})
+
+		// Container logs (via Loki)
+		r.Route("/logs", func(r chi.Router) {
+			r.Get("/", logsHandler.ListSources)
+			r.Get("/{appID}", logsHandler.GetLogs)
+			r.Get("/{appID}/stream", logsHandler.StreamLogs)
 		})
 
 		// GitHub import

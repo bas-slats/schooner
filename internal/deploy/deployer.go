@@ -118,6 +118,7 @@ func (d *Deployer) Rollback(ctx context.Context, app *models.App, targetBuild *m
 		ImageTag:      targetBuild.ImageTag.String,
 		EnvVars:       app.EnvVars,
 		Labels: map[string]string{
+			"schooner.managed":  "true",
 			"schooner.app":      app.Name,
 			"schooner.app-id":   app.ID,
 			"schooner.build-id": targetBuild.ID,

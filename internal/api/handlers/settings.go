@@ -2,27 +2,31 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"schooner/internal/cloudflare"
 	"schooner/internal/database/queries"
 	"schooner/internal/github"
+	"schooner/internal/observability"
 )
 
 // SettingsHandler handles settings-related requests
 type SettingsHandler struct {
-	settingsQueries *queries.SettingsQueries
-	githubClient    *github.Client
-	tunnelManager   *cloudflare.Manager
+	settingsQueries      *queries.SettingsQueries
+	githubClient         *github.Client
+	tunnelManager        *cloudflare.Manager
+	observabilityManager *observability.Manager
 }
 
 // NewSettingsHandler creates a new SettingsHandler
-func NewSettingsHandler(settingsQueries *queries.SettingsQueries, githubClient *github.Client, tunnelManager *cloudflare.Manager) *SettingsHandler {
+func NewSettingsHandler(settingsQueries *queries.SettingsQueries, githubClient *github.Client, tunnelManager *cloudflare.Manager, observabilityManager *observability.Manager) *SettingsHandler {
 	return &SettingsHandler{
-		settingsQueries: settingsQueries,
-		githubClient:    githubClient,
-		tunnelManager:   tunnelManager,
+		settingsQueries:      settingsQueries,
+		githubClient:         githubClient,
+		tunnelManager:        tunnelManager,
+		observabilityManager: observabilityManager,
 	}
 }
 
@@ -315,5 +319,154 @@ func (h *SettingsHandler) StopTunnel(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Tunnel stopped",
+	})
+}
+
+// GetObservabilityStatus handles GET /api/settings/observability-status
+func (h *SettingsHandler) GetObservabilityStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.observabilityManager == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"available": false,
+			"enabled":   false,
+		})
+		return
+	}
+
+	status, err := h.observabilityManager.GetStatus(ctx)
+	if err != nil {
+		slog.Error("failed to get observability status", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"available":   true,
+		"enabled":     status.Enabled,
+		"grafana_url": status.GrafanaURL,
+	}
+
+	if status.LokiStatus != nil {
+		response["loki_status"] = status.LokiStatus.State
+	}
+	if status.PromtailStatus != nil {
+		response["promtail_status"] = status.PromtailStatus.State
+	}
+	if status.GrafanaStatus != nil {
+		response["grafana_status"] = status.GrafanaStatus.State
+	}
+
+	// Check if all services are running
+	running := status.LokiStatus != nil && status.LokiStatus.State == "running" &&
+		status.PromtailStatus != nil && status.PromtailStatus.State == "running" &&
+		status.GrafanaStatus != nil && status.GrafanaStatus.State == "running"
+	response["running"] = running
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// SetObservabilityConfig handles POST /api/settings/observability
+func (h *SettingsHandler) SetObservabilityConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req struct {
+		Enabled       bool   `json:"enabled"`
+		GrafanaPort   int    `json:"grafana_port"`
+		LokiRetention string `json:"loki_retention"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Save settings
+	if err := h.settingsQueries.Set(ctx, "observability_enabled", fmt.Sprintf("%t", req.Enabled)); err != nil {
+		slog.Error("failed to save observability enabled", "error", err)
+		http.Error(w, "failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	if req.GrafanaPort > 0 {
+		if err := h.settingsQueries.Set(ctx, "observability_grafana_port", fmt.Sprintf("%d", req.GrafanaPort)); err != nil {
+			slog.Error("failed to save Grafana port", "error", err)
+			http.Error(w, "failed to save settings", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if req.LokiRetention != "" {
+		if err := h.settingsQueries.Set(ctx, "observability_loki_retention", req.LokiRetention); err != nil {
+			slog.Error("failed to save Loki retention", "error", err)
+			http.Error(w, "failed to save settings", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	slog.Info("observability settings saved", "enabled", req.Enabled, "grafana_port", req.GrafanaPort, "retention", req.LokiRetention)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Observability settings saved",
+	})
+}
+
+// StartObservability handles POST /api/settings/observability/start
+func (h *SettingsHandler) StartObservability(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.observabilityManager == nil {
+		http.Error(w, "observability manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Enable observability before starting
+	if err := h.settingsQueries.Set(ctx, "observability_enabled", "true"); err != nil {
+		slog.Error("failed to enable observability", "error", err)
+		http.Error(w, "failed to enable observability", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.observabilityManager.Start(ctx); err != nil {
+		slog.Error("failed to start observability stack", "error", err)
+		http.Error(w, "failed to start observability: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"message":     "Observability stack started",
+		"grafana_url": h.observabilityManager.GetGrafanaURL(ctx),
+	})
+}
+
+// StopObservability handles POST /api/settings/observability/stop
+func (h *SettingsHandler) StopObservability(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.observabilityManager == nil {
+		http.Error(w, "observability manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := h.observabilityManager.Stop(ctx); err != nil {
+		slog.Error("failed to stop observability stack", "error", err)
+		http.Error(w, "failed to stop observability: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Disable observability after stopping
+	if err := h.settingsQueries.Set(ctx, "observability_enabled", "false"); err != nil {
+		slog.Warn("failed to disable observability setting", "error", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Observability stack stopped",
 	})
 }

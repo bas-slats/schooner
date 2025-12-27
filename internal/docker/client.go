@@ -333,6 +333,43 @@ func (c *Client) RemoveContainer(ctx context.Context, nameOrID string) error {
 	return c.cli.ContainerRemove(ctx, nameOrID, container.RemoveOptions{Force: true})
 }
 
+// EnsureNetwork creates a network if it doesn't exist
+func (c *Client) EnsureNetwork(ctx context.Context, name string) error {
+	networks, err := c.cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", name)),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	// Check if network already exists (exact match)
+	for _, net := range networks {
+		if net.Name == name {
+			c.logger.Debug("network already exists", "name", name)
+			return nil
+		}
+	}
+
+	// Create network
+	c.logger.Info("creating network", "name", name)
+	_, err = c.cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{
+			"schooner.managed": "true",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network: %w", err)
+	}
+
+	return nil
+}
+
+// ConnectToNetwork connects a container to a network
+func (c *Client) ConnectToNetwork(ctx context.Context, containerID, networkName string) error {
+	return c.cli.NetworkConnect(ctx, networkName, containerID, nil)
+}
+
 // CreateAndStartContainer creates and starts a container with full config
 func (c *Client) CreateAndStartContainer(ctx context.Context, cfg ContainerConfig) (string, error) {
 	c.logger.Info("creating container", "name", cfg.Name, "image", cfg.Image)
