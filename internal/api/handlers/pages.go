@@ -513,10 +513,6 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No builds yet</td></tr>`)
 	} else {
 		for _, build := range builds {
-			commitSHA := build.GetShortSHA()
-			if commitSHA == "" {
-				commitSHA = "-"
-			}
 			fmt.Fprintf(w, `
                     <tr class="border-t border-gray-200">
                         <td class="px-4 py-3 text-sm">%s</td>
@@ -529,7 +525,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                     </tr>`,
 				html.EscapeString(build.AppName),
 				buildStatusBadge(build.Status),
-				html.EscapeString(commitSHA),
+				commitLink(build.AppRepoURL, build.GetCommitSHA()),
 				html.EscapeString(string(build.Trigger)),
 				html.EscapeString(build.ID))
 		}
@@ -998,10 +994,6 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
                 <tbody>`)
 
 	for _, build := range builds {
-		commitSHA := build.GetShortSHA()
-		if commitSHA == "" {
-			commitSHA = "-"
-		}
 		commitMsg := build.GetCommitMessage()
 		if len(commitMsg) > 50 {
 			commitMsg = commitMsg[:50] + "..."
@@ -1017,7 +1009,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
                         </td>
                     </tr>`,
 			buildStatusBadge(build.Status),
-			html.EscapeString(commitSHA),
+			commitLink(build.AppRepoURL, build.GetCommitSHA()),
 			html.EscapeString(commitMsg),
 			html.EscapeString(string(build.Trigger)),
 			html.EscapeString(build.ID))
@@ -1883,6 +1875,25 @@ func webhookButton(app *models.App) string {
 	}
 	return fmt.Sprintf(`<button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>`,
 		app.ID, html.EscapeString(app.Name))
+}
+
+func commitLink(repoURL, sha string) string {
+	if sha == "" || sha == "-" {
+		return "-"
+	}
+	// Convert repo URL to GitHub web URL
+	// https://github.com/user/repo.git -> https://github.com/user/repo/commit/SHA
+	webURL := strings.TrimSuffix(repoURL, ".git")
+	webURL = strings.Replace(webURL, "git@github.com:", "https://github.com/", 1)
+	if !strings.HasPrefix(webURL, "https://") {
+		webURL = "https://" + webURL
+	}
+	shortSHA := sha
+	if len(sha) > 8 {
+		shortSHA = sha[:8]
+	}
+	return fmt.Sprintf(`<a href="%s/commit/%s" target="_blank" class="text-purple-600 hover:text-purple-700 hover:underline">%s</a>`,
+		html.EscapeString(webURL), html.EscapeString(sha), html.EscapeString(shortSHA))
 }
 
 func buildStatusBadge(status models.BuildStatus) string {

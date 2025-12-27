@@ -44,7 +44,7 @@ func (q *BuildQueries) Create(ctx context.Context, build *models.Build) error {
 func (q *BuildQueries) GetByID(ctx context.Context, id string) (*models.Build, error) {
 	var build models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		WHERE b.id = ?`
@@ -64,7 +64,7 @@ func (q *BuildQueries) GetByID(ctx context.Context, id string) (*models.Build, e
 func (q *BuildQueries) ListByAppID(ctx context.Context, appID string, limit, offset int) ([]*models.Build, error) {
 	var builds []*models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		WHERE b.app_id = ?
@@ -83,7 +83,7 @@ func (q *BuildQueries) ListByAppID(ctx context.Context, appID string, limit, off
 func (q *BuildQueries) ListRecent(ctx context.Context, limit int) ([]*models.Build, error) {
 	var builds []*models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		ORDER BY b.created_at DESC
@@ -101,7 +101,7 @@ func (q *BuildQueries) ListRecent(ctx context.Context, limit int) ([]*models.Bui
 func (q *BuildQueries) GetLatestByAppID(ctx context.Context, appID string) (*models.Build, error) {
 	var build models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		WHERE b.app_id = ?
@@ -123,7 +123,7 @@ func (q *BuildQueries) GetLatestByAppID(ctx context.Context, appID string) (*mod
 func (q *BuildQueries) GetLatestSuccessfulByAppID(ctx context.Context, appID string) (*models.Build, error) {
 	var build models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		WHERE b.app_id = ? AND b.status = 'success'
@@ -203,7 +203,7 @@ func (q *BuildQueries) Delete(ctx context.Context, id string) error {
 func (q *BuildQueries) GetRunningBuilds(ctx context.Context) ([]*models.Build, error) {
 	var builds []*models.Build
 	query := `
-		SELECT b.*, a.name as app_name
+		SELECT b.*, a.name as app_name, a.repo_url as app_repo_url
 		FROM builds b
 		JOIN apps a ON a.id = b.app_id
 		WHERE b.status IN ('pending', 'cloning', 'building', 'pushing', 'deploying')

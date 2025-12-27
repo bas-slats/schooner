@@ -45,7 +45,8 @@ type Build struct {
 	CreatedAt     time.Time      `db:"created_at" json:"created_at"`
 
 	// Joined fields (not in DB)
-	AppName string `db:"app_name" json:"app_name,omitempty"`
+	AppName    string `db:"app_name" json:"app_name,omitempty"`
+	AppRepoURL string `db:"app_repo_url" json:"app_repo_url,omitempty"`
 }
 
 // GetCommitSHA returns commit SHA or empty string
