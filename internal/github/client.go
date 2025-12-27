@@ -53,6 +53,11 @@ func (c *Client) HasToken() bool {
 	return c.token != ""
 }
 
+// GetToken returns the current token
+func (c *Client) GetToken() string {
+	return c.token
+}
+
 // ListUserRepos lists repositories for the authenticated user
 func (c *Client) ListUserRepos(ctx context.Context, page, perPage int) ([]Repository, error) {
 	if c.token == "" {

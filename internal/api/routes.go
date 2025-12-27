@@ -65,6 +65,11 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	if cfg.Git.SSHKeyPath != "" {
 		gitOpts = append(gitOpts, git.WithSSHKey(cfg.Git.SSHKeyPath))
 	}
+	// Use GitHub token for HTTPS auth if available
+	if githubClient.HasToken() {
+		gitOpts = append(gitOpts, git.WithHTTPAuth("x-access-token", githubClient.GetToken()))
+		slog.Info("Git client configured with GitHub token for HTTPS auth")
+	}
 	gitClient, err := git.NewClient(cfg.Git.WorkDir, gitOpts...)
 	if err != nil {
 		slog.Warn("failed to create Git client", "error", err)
