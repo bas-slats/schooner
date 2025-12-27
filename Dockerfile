@@ -3,7 +3,7 @@
 #=====================================
 # Stage 1: Build Go binary
 #=====================================
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ ARG VERSION=dev
 RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags="-w -s -X main.version=${VERSION}" \
     -o /homelab-cd \
-    ./cmd/homelab-cd
+    ./cmd/schooner
 
 #=====================================
 # Stage 2: Final runtime image
