@@ -1,0 +1,77 @@
+# Homelab CD Configuration
+# Copy this file to config.yaml and customize for your environment
+
+server:
+  # Host to bind to (0.0.0.0 for all interfaces)
+  host: "0.0.0.0"
+  # Port to listen on
+  port: 8080
+  # Base URL for the application (used for webhook URLs)
+  base_url: "http://localhost:8080"
+  # Secret key for session encryption (generate a random string)
+  secret_key: "${HOMELAB_CD_SECRET}"
+
+database:
+  # Path to SQLite database file
+  path: "./data/homelab-cd.db"
+
+git:
+  # Directory to store cloned repositories
+  work_dir: "./data/repos"
+  # SSH key for private repositories (optional)
+  # ssh_key_path: "/path/to/id_rsa"
+  # Or use token-based auth for HTTPS URLs
+  # username: "git"
+  # token: "${GITHUB_TOKEN}"
+
+docker:
+  # Enable automatic cleanup of old images
+  cleanup_enabled: true
+  # Number of images to keep per app
+  keep_image_count: 5
+  # Build timeout
+  build_timeout: "30m"
+
+# Applications to deploy
+apps:
+  # Example: Simple web app with Dockerfile
+  - name: "my-web-app"
+    description: "My personal website"
+    repo_url: "https://github.com/username/my-web-app.git"
+    branch: "main"
+    # Webhook secret from GitHub (optional but recommended)
+    webhook_secret: "${WEBHOOK_SECRET_MY_APP}"
+    # Build strategy: dockerfile, compose, or buildpacks
+    build_strategy: "dockerfile"
+    # Path to Dockerfile relative to repo root
+    dockerfile_path: "Dockerfile"
+    # Build context directory
+    build_context: "."
+    # Container name (defaults to app name)
+    container_name: "my-web-app"
+    # Image name (defaults to app name)
+    image_name: "my-web-app"
+    # Automatically deploy on push
+    auto_deploy: true
+
+  # Example: Docker Compose application
+  # - name: "home-assistant"
+  #   description: "Home Assistant with addons"
+  #   repo_url: "git@github.com:username/ha-config.git"
+  #   branch: "main"
+  #   build_strategy: "compose"
+  #   compose_file: "docker-compose.yaml"
+  #   auto_deploy: true
+
+  # Example: Buildpacks (no Dockerfile needed)
+  # - name: "api-service"
+  #   description: "Node.js API service"
+  #   repo_url: "https://github.com/username/api-service.git"
+  #   branch: "main"
+  #   build_strategy: "buildpacks"
+  #   container_name: "api-service"
+  #   image_name: "api-service"
+  #   env_vars:
+  #     NODE_ENV: "production"
+  #     PORT: "3000"
+  #   auto_deploy: true

@@ -1,0 +1,64 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+homelab-cd
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Config with secrets
+config.yaml
+!config/config.example.yaml
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Node modules (if using Tailwind)
+node_modules/
+package-lock.json
+
+# Air (hot reload)
+.air.toml
+
+# Build artifacts
+dist/
+.claude/

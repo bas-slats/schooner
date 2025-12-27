@@ -1,0 +1,58 @@
+# Homelab CD - Docker Compose Configuration
+# Use this to run Homelab CD itself
+
+services:
+  homelab-cd:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: homelab-cd:${VERSION:-latest}
+    container_name: homelab-cd
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      # Mount Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent data (database and cloned repos)
+      - homelab-cd-data:/data
+      # Custom config file (create from config.example.yaml)
+      - ./config.yaml:/app/config/config.yaml:ro
+      # SSH keys for private repositories (optional)
+      # - ~/.ssh:/data/ssh:ro
+    environment:
+      - TZ=${TZ:-UTC}
+      # Set your secrets via environment variables
+      - HOMELAB_CD_SECRET=${HOMELAB_CD_SECRET:-change-me-in-production}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    labels:
+      - "homelab-cd.managed=false"
+
+volumes:
+  homelab-cd-data:
+    driver: local
+
+# Example: If you want to use Traefik for reverse proxy
+# Uncomment and configure as needed
+#
+# networks:
+#   traefik:
+#     external: true
+#
+# services:
+#   homelab-cd:
+#     networks:
+#       - traefik
+#     labels:
+#       - "traefik.enable=true"
+#       - "traefik.http.routers.homelab-cd.rule=Host(`cd.example.com`)"
+#       - "traefik.http.routers.homelab-cd.entrypoints=websecure"
+#       - "traefik.http.routers.homelab-cd.tls.certresolver=letsencrypt"
+#       - "traefik.http.services.homelab-cd.loadbalancer.server.port=8080"
