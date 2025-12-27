@@ -1,11 +1,15 @@
 .PHONY: all build test fmt vet lint clean install-hooks run
 
+# Git commit for version embedding
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+LDFLAGS := -ldflags "-X schooner/internal/version.Commit=$(COMMIT)"
+
 # Default target
 all: fmt vet test build
 
 # Build the binary
 build:
-	go build -o schooner ./cmd/schooner
+	go build $(LDFLAGS) -o schooner ./cmd/schooner
 
 # Run tests
 test:

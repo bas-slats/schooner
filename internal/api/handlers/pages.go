@@ -18,6 +18,7 @@ import (
 	"schooner/internal/docker"
 	"schooner/internal/models"
 	"schooner/internal/observability"
+	"schooner/internal/version"
 )
 
 // PageHandler handles page rendering
@@ -448,6 +449,9 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
             });
         }
     </script>
+    <footer class="max-w-7xl mx-auto px-6 py-4 text-center text-xs text-gray-400">
+        Schooner ` + version.GetShortCommit() + `
+    </footer>
 </body>
 </html>`)
 }
