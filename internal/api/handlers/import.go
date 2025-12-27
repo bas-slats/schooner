@@ -202,8 +202,13 @@ func (h *ImportHandler) ImportRepo(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-install GitHub webhook
 	webhookInstalled := false
-	if h.githubClient.HasToken() && h.cfg.Server.BaseURL != "" {
+	hasToken := h.githubClient.HasToken()
+	baseURL := h.cfg.Server.BaseURL
+	slog.Info("webhook install check", "hasToken", hasToken, "baseURL", baseURL)
+	if hasToken && baseURL != "" {
 		webhookInstalled = h.installWebhook(ctx, app, owner, repoName)
+	} else {
+		slog.Warn("skipping webhook install", "hasToken", hasToken, "hasBaseURL", baseURL != "")
 	}
 
 	slog.Info("app imported from GitHub", "id", app.ID, "name", app.Name, "repo", req.RepoFullName, "webhookInstalled", webhookInstalled)

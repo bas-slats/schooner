@@ -57,7 +57,7 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title 
     <title>%s | Schooner</title>
     <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="/static/js/htmx.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <link href="/static/css/styles.css" rel="stylesheet">
     <style>
         .gradient-text {
