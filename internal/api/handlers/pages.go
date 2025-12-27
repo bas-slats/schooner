@@ -6,6 +6,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -58,13 +59,21 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/js/htmx.min.js"></script>
     <link href="/static/css/styles.css" rel="stylesheet">
+    <style>
+        .gradient-text {
+            background: linear-gradient(135deg, #8b5cf6 0%%, #3b82f6 100%%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+    </style>
 </head>
 <body class="bg-gray-50 text-gray-900 min-h-screen">
     <nav class="bg-white border-b border-gray-200">
         <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
             <a href="/" class="flex items-center space-x-2">
                 <img src="/static/img/logo.svg" alt="Schooner" class="h-8 w-8">
-                <span class="text-xl font-bold">Schooner</span>
+                <span class="text-xl font-bold gradient-text">Schooner</span>
             </a>
             <div class="flex items-center space-x-4">
                 <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
@@ -395,6 +404,9 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 	h.writeHeader(w, r, "Dashboard")
 
+	// System Health Section
+	h.renderSystemHealth(w)
+
 	fmt.Fprint(w, `<h1 class="text-2xl font-bold mb-6">Applications</h1>`)
 
 	if len(apps) == 0 {
@@ -469,6 +481,108 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	h.writeFooter(w)
 }
 
+func (h *PageHandler) renderSystemHealth(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div class="mb-8">
+            <h2 class="text-xl font-bold mb-4">System Health</h2>
+            <div id="system-health" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- CPU -->
+                <div class="bg-white shadow-sm rounded-lg p-4 border border-gray-200">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-gray-500 text-sm">CPU</span>
+                        <span id="cpu-cores" class="text-xs text-gray-400"></span>
+                    </div>
+                    <div class="text-2xl font-bold" id="cpu-usage">--%</div>
+                    <div class="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div id="cpu-bar" class="h-full bg-blue-500 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">Load: <span id="cpu-load">-</span></div>
+                </div>
+
+                <!-- Memory -->
+                <div class="bg-white shadow-sm rounded-lg p-4 border border-gray-200">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-gray-500 text-sm">Memory</span>
+                        <span id="mem-total" class="text-xs text-gray-400"></span>
+                    </div>
+                    <div class="text-2xl font-bold" id="mem-usage">--%</div>
+                    <div class="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div id="mem-bar" class="h-full bg-purple-500 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1"><span id="mem-used">-</span> / <span id="mem-total-val">-</span></div>
+                </div>
+
+                <!-- Disk -->
+                <div class="bg-white shadow-sm rounded-lg p-4 border border-gray-200">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-gray-500 text-sm">Disk</span>
+                        <span id="disk-path" class="text-xs text-gray-400">/</span>
+                    </div>
+                    <div class="text-2xl font-bold" id="disk-usage">--%</div>
+                    <div class="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div id="disk-bar" class="h-full bg-green-500 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1"><span id="disk-used">-</span> / <span id="disk-total">-</span></div>
+                </div>
+            </div>
+        </div>
+        <script>
+            function loadSystemHealth() {
+                fetch('/api/health/system')
+                    .then(response => response.json())
+                    .then(data => {
+                        // CPU
+                        const cpuPercent = data.cpu.usage_percent.toFixed(0);
+                        document.getElementById('cpu-usage').textContent = cpuPercent + '%';
+                        document.getElementById('cpu-bar').style.width = cpuPercent + '%';
+                        document.getElementById('cpu-cores').textContent = data.cpu.num_cores + ' cores';
+                        document.getElementById('cpu-load').textContent =
+                            data.cpu.load_avg_1.toFixed(2) + ' / ' +
+                            data.cpu.load_avg_5.toFixed(2) + ' / ' +
+                            data.cpu.load_avg_15.toFixed(2);
+
+                        // Color CPU bar based on usage
+                        const cpuBar = document.getElementById('cpu-bar');
+                        if (cpuPercent > 80) cpuBar.className = 'h-full bg-red-500 rounded-full transition-all';
+                        else if (cpuPercent > 60) cpuBar.className = 'h-full bg-yellow-500 rounded-full transition-all';
+                        else cpuBar.className = 'h-full bg-blue-500 rounded-full transition-all';
+
+                        // Memory
+                        const memPercent = data.memory.used_percent.toFixed(0);
+                        document.getElementById('mem-usage').textContent = memPercent + '%';
+                        document.getElementById('mem-bar').style.width = memPercent + '%';
+                        document.getElementById('mem-total').textContent = data.memory.total_display;
+                        document.getElementById('mem-used').textContent = data.memory.used_display;
+                        document.getElementById('mem-total-val').textContent = data.memory.total_display;
+
+                        // Color memory bar
+                        const memBar = document.getElementById('mem-bar');
+                        if (memPercent > 85) memBar.className = 'h-full bg-red-500 rounded-full transition-all';
+                        else if (memPercent > 70) memBar.className = 'h-full bg-yellow-500 rounded-full transition-all';
+                        else memBar.className = 'h-full bg-purple-500 rounded-full transition-all';
+
+                        // Disk
+                        const diskPercent = data.disk.used_percent.toFixed(0);
+                        document.getElementById('disk-usage').textContent = diskPercent + '%';
+                        document.getElementById('disk-bar').style.width = diskPercent + '%';
+                        document.getElementById('disk-path').textContent = data.disk.path;
+                        document.getElementById('disk-used').textContent = data.disk.used_display;
+                        document.getElementById('disk-total').textContent = data.disk.total_display;
+
+                        // Color disk bar
+                        const diskBar = document.getElementById('disk-bar');
+                        if (diskPercent > 90) diskBar.className = 'h-full bg-red-500 rounded-full transition-all';
+                        else if (diskPercent > 75) diskBar.className = 'h-full bg-yellow-500 rounded-full transition-all';
+                        else diskBar.className = 'h-full bg-green-500 rounded-full transition-all';
+                    })
+                    .catch(err => console.error('Failed to load system health:', err));
+            }
+            loadSystemHealth();
+            // Refresh every 10 seconds
+            setInterval(loadSystemHealth, 10000);
+        </script>`)
+}
+
 func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.Context) {
 	if h.dockerClient == nil {
 		return
@@ -489,13 +603,14 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
                         <th class="px-4 py-3 text-left text-sm">Name</th>
                         <th class="px-4 py-3 text-left text-sm">Image</th>
                         <th class="px-4 py-3 text-left text-sm">Status</th>
+                        <th class="px-4 py-3 text-left text-sm">Health</th>
                         <th class="px-4 py-3 text-left text-sm">Ports</th>
                     </tr>
                 </thead>
                 <tbody>`)
 
 	if len(containers) == 0 {
-		fmt.Fprint(w, `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">No containers running</td></tr>`)
+		fmt.Fprint(w, `<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No containers running</td></tr>`)
 	} else {
 		for _, c := range containers {
 			name := ""
@@ -530,6 +645,24 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
 				statusClass = "bg-yellow-100 text-yellow-700"
 			}
 
+			// Parse health status from Status string (e.g., "Up 2 hours (healthy)")
+			healthStatus := "-"
+			healthClass := "text-gray-400"
+			statusStr := c.Status
+			if strings.Contains(statusStr, "(healthy)") {
+				healthStatus = "healthy"
+				healthClass = "text-green-600"
+			} else if strings.Contains(statusStr, "(unhealthy)") {
+				healthStatus = "unhealthy"
+				healthClass = "text-red-600"
+			} else if strings.Contains(statusStr, "(health: starting)") {
+				healthStatus = "starting"
+				healthClass = "text-yellow-600"
+			} else if c.State == "running" {
+				healthStatus = "no check"
+				healthClass = "text-gray-400"
+			}
+
 			// Truncate image name if too long
 			image := c.Image
 			if len(image) > 40 {
@@ -543,12 +676,15 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
                         <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
                         </td>
+                        <td class="px-4 py-3 text-sm %s">%s</td>
                         <td class="px-4 py-3 text-sm font-mono">%s</td>
                     </tr>`,
 				html.EscapeString(name),
 				html.EscapeString(image),
 				statusClass,
 				html.EscapeString(c.State),
+				healthClass,
+				healthStatus,
 				html.EscapeString(ports))
 		}
 	}

@@ -195,6 +195,9 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 			r.Get("/repos", importHandler.ListRepos)
 			r.Post("/import", importHandler.ImportRepo)
 		})
+
+		// System health
+		r.Get("/health/system", healthHandler.GetSystemHealth)
 	})
 
 	return r

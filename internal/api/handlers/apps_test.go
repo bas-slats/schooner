@@ -106,7 +106,7 @@ func TestAppCreateRequest_JSONMarshal(t *testing.T) {
 }
 
 func TestNewAppHandler(t *testing.T) {
-	handler := NewAppHandler(nil, nil, nil, nil)
+	handler := NewAppHandler(nil, nil, nil, nil, nil)
 	if handler == nil {
 		t.Error("Expected non-nil handler")
 	}
@@ -125,7 +125,7 @@ func TestNewAppHandler(t *testing.T) {
 }
 
 func TestAppHandler_List_NoQueries(t *testing.T) {
-	handler := NewAppHandler(nil, nil, nil, nil)
+	handler := NewAppHandler(nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/apps", nil)
 	w := httptest.NewRecorder()

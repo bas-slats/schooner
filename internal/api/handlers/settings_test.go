@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewSettingsHandler(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 	if handler == nil {
 		t.Error("Expected non-nil handler")
 	}
@@ -25,7 +25,7 @@ func TestNewSettingsHandler(t *testing.T) {
 }
 
 func TestSettingsHandler_GetTunnelStatus_NoManager(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/settings/tunnel-status", nil)
 	w := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestSettingsHandler_GetTunnelStatus_NoManager(t *testing.T) {
 }
 
 func TestSettingsHandler_SetTunnelConfig_InvalidBody(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/settings/tunnel", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -65,7 +65,7 @@ func TestSettingsHandler_SetTunnelConfig_InvalidBody(t *testing.T) {
 }
 
 func TestSettingsHandler_StartTunnel_NoManager(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/settings/tunnel/start", nil)
 	w := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestSettingsHandler_StartTunnel_NoManager(t *testing.T) {
 }
 
 func TestSettingsHandler_StopTunnel_NoManager(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/settings/tunnel/stop", nil)
 	w := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestSettingsHandler_StopTunnel_NoManager(t *testing.T) {
 }
 
 func TestSettingsHandler_SetCloneDirectory_InvalidBody(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/settings/clone-directory", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -105,7 +105,7 @@ func TestSettingsHandler_SetCloneDirectory_InvalidBody(t *testing.T) {
 }
 
 func TestSettingsHandler_SetCloneDirectory_EmptyPath(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	body := `{"clone_directory": ""}`
 	req := httptest.NewRequest("POST", "/api/settings/clone-directory", strings.NewReader(body))
@@ -120,7 +120,7 @@ func TestSettingsHandler_SetCloneDirectory_EmptyPath(t *testing.T) {
 }
 
 func TestSettingsHandler_SetGitHubToken_InvalidBody(t *testing.T) {
-	handler := NewSettingsHandler(nil, nil, nil)
+	handler := NewSettingsHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/settings/github-token", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
