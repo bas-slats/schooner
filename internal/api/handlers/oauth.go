@@ -137,6 +137,23 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if user is allowed (if allowed_users is configured)
+	if len(h.cfg.GitHubOAuth.AllowedUsers) > 0 {
+		allowed := false
+		for _, u := range h.cfg.GitHubOAuth.AllowedUsers {
+			if strings.EqualFold(u, username) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			slog.Warn("unauthorized login attempt", "username", username)
+			h.githubClient.SetToken("") // Clear the token
+			http.Redirect(w, r, "/oauth/github/login?error="+url.QueryEscape("User not authorized"), http.StatusTemporaryRedirect)
+			return
+		}
+	}
+
 	// Save the token to settings (for API access)
 	if err := h.settingsQueries.Set(ctx, "github_token", tokenResp.AccessToken); err != nil {
 		slog.Error("failed to save GitHub token", "error", err)
