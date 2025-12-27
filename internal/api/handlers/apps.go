@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"schooner/internal/build"
 	"schooner/internal/cloudflare"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
@@ -22,15 +23,17 @@ type AppHandler struct {
 	buildQueries  *queries.BuildQueries
 	dockerClient  *docker.Client
 	tunnelManager *cloudflare.Manager
+	orchestrator  *build.Orchestrator
 }
 
 // NewAppHandler creates a new AppHandler
-func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager) *AppHandler {
+func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager, orchestrator *build.Orchestrator) *AppHandler {
 	return &AppHandler{
 		appQueries:    appQueries,
 		buildQueries:  buildQueries,
 		dockerClient:  dockerClient,
 		tunnelManager: tunnelManager,
+		orchestrator:  orchestrator,
 	}
 }
 
@@ -346,12 +349,26 @@ func (h *AppHandler) TriggerDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Trigger build via orchestrator
+	if h.orchestrator == nil {
+		http.Error(w, "build orchestrator not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Trigger build via orchestrator
+	build, err := h.orchestrator.TriggerManualBuild(ctx, appID)
+	if err != nil {
+		slog.Error("failed to trigger build", "appID", appID, "error", err)
+		http.Error(w, "failed to trigger build: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("build triggered", "appID", appID, "buildID", build.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "queued",
-		"message": "Build will start shortly",
+		"status":   "queued",
+		"build_id": build.ID,
+		"message":  "Build queued successfully",
 	})
 }
 

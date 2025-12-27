@@ -9,11 +9,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"schooner/internal/api/handlers"
+	"schooner/internal/build"
+	"schooner/internal/build/strategies"
 	"schooner/internal/cloudflare"
 	"schooner/internal/config"
 	"schooner/internal/database"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
+	"schooner/internal/git"
 	"schooner/internal/github"
 )
 
@@ -44,6 +47,25 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 		slog.Warn("failed to create Docker client, container management disabled", "error", err)
 	}
 
+	// Initialize Git client
+	var gitOpts []git.ClientOption
+	if cfg.Git.SSHKeyPath != "" {
+		gitOpts = append(gitOpts, git.WithSSHKey(cfg.Git.SSHKeyPath))
+	}
+	gitClient, err := git.NewClient(cfg.Git.WorkDir, gitOpts...)
+	if err != nil {
+		slog.Warn("failed to create Git client", "error", err)
+	}
+
+	// Initialize build orchestrator
+	var orchestrator *build.Orchestrator
+	if gitClient != nil && dockerClient != nil {
+		orchestrator = build.NewOrchestrator(gitClient, dockerClient, appQueries, buildQueries, logQueries)
+		orchestrator.RegisterStrategy(strategies.NewDockerfileStrategy(dockerClient))
+		orchestrator.RegisterStrategy(strategies.NewComposeStrategy(dockerClient))
+		orchestrator.Start(2) // 2 concurrent build workers
+	}
+
 	// Initialize Cloudflare tunnel manager
 	var tunnelManager *cloudflare.Manager
 	if dockerClient != nil {
@@ -53,7 +75,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	webhookHandler := handlers.NewWebhookHandler(cfg, appQueries, buildQueries, logQueries)
-	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient, tunnelManager)
+	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient, tunnelManager, orchestrator)
 	buildHandler := handlers.NewBuildHandler(buildQueries, logQueries)
 	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager)
 	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager)

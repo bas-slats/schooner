@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"log/slog"
@@ -449,7 +450,100 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
             </table>
         </div>`)
 
+	// Docker containers section
+	h.renderDockerContainers(w, ctx)
+
 	h.writeFooter(w)
+}
+
+func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.Context) {
+	if h.dockerClient == nil {
+		return
+	}
+
+	containers, err := h.dockerClient.ListContainers(ctx, true, nil)
+	if err != nil {
+		slog.Error("failed to list containers", "error", err)
+		return
+	}
+
+	fmt.Fprint(w, `
+        <h2 class="text-xl font-bold mt-10 mb-4">Docker Containers</h2>
+        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-sm">Name</th>
+                        <th class="px-4 py-3 text-left text-sm">Image</th>
+                        <th class="px-4 py-3 text-left text-sm">Status</th>
+                        <th class="px-4 py-3 text-left text-sm">Ports</th>
+                    </tr>
+                </thead>
+                <tbody>`)
+
+	if len(containers) == 0 {
+		fmt.Fprint(w, `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">No containers running</td></tr>`)
+	} else {
+		for _, c := range containers {
+			name := ""
+			if len(c.Names) > 0 {
+				name = c.Names[0]
+				if len(name) > 0 && name[0] == '/' {
+					name = name[1:]
+				}
+			}
+
+			// Build ports string
+			ports := ""
+			for _, p := range c.Ports {
+				if p.PublicPort > 0 {
+					if ports != "" {
+						ports += ", "
+					}
+					ports += fmt.Sprintf("%d:%d", p.PublicPort, p.PrivatePort)
+				}
+			}
+			if ports == "" {
+				ports = "-"
+			}
+
+			// Status badge color
+			statusClass := "bg-gray-100 text-gray-700"
+			if c.State == "running" {
+				statusClass = "bg-green-100 text-green-700"
+			} else if c.State == "exited" {
+				statusClass = "bg-red-100 text-red-700"
+			} else if c.State == "paused" {
+				statusClass = "bg-yellow-100 text-yellow-700"
+			}
+
+			// Truncate image name if too long
+			image := c.Image
+			if len(image) > 40 {
+				image = image[:37] + "..."
+			}
+
+			fmt.Fprintf(w, `
+                    <tr class="border-t border-gray-200">
+                        <td class="px-4 py-3 text-sm font-medium">%s</td>
+                        <td class="px-4 py-3 text-sm font-mono text-gray-600">%s</td>
+                        <td class="px-4 py-3 text-sm">
+                            <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
+                        </td>
+                        <td class="px-4 py-3 text-sm font-mono">%s</td>
+                    </tr>`,
+				html.EscapeString(name),
+				html.EscapeString(image),
+				statusClass,
+				html.EscapeString(c.State),
+				html.EscapeString(ports))
+		}
+	}
+
+	fmt.Fprint(w, `
+                </tbody>
+            </table>
+        </div>`)
 }
 
 func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, latestBuild *models.Build, containerStatus *docker.ContainerStatus) {
