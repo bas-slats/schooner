@@ -1059,12 +1059,13 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
             <h1 class="text-2xl font-bold">Build %s</h1>
         </div>
         <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200 mb-8">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-2 gap-4 mb-4">
                 <div><span class="text-gray-500">App:</span> <span class="ml-2">%s</span></div>
                 <div><span class="text-gray-500">Status:</span> <span class="ml-2">%s</span></div>
                 <div><span class="text-gray-500">Commit:</span> <span class="ml-2 font-mono">%s</span></div>
                 <div><span class="text-gray-500">Trigger:</span> <span class="ml-2">%s</span></div>
             </div>
+            <div id="duration-bar" class="pt-4 border-t border-gray-200 text-sm font-medium"></div>
         </div>
         <h2 class="text-xl font-bold mb-4">Build Logs</h2>
         <div class="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
@@ -1075,7 +1076,6 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
             <div id="log-content" class="p-4 h-96 overflow-y-auto font-mono text-sm whitespace-pre-wrap">
                 Loading logs...
             </div>
-            <div id="duration-bar" class="bg-white border-t border-gray-200 px-4 py-3 text-sm font-medium"></div>
         </div>
     <script>
         const logContent = document.getElementById('log-content');
