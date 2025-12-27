@@ -118,6 +118,13 @@ CREATE TABLE IF NOT EXISTS deployments (
     stopped_at DATETIME
 );
 
+-- Settings table (key-value store for global settings)
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_builds_app_id ON builds(app_id);
 CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);

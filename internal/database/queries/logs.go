@@ -7,7 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"homelab-cd/internal/models"
+	"schooner/internal/models"
 )
 
 // LogQueries provides database operations for build logs

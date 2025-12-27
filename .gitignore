@@ -5,7 +5,8 @@ bin/
 *.dll
 *.so
 *.dylib
-homelab-cd
+/homelab-cd
+/schooner
 
 # Test binary
 *.test

@@ -4,11 +4,12 @@ import "time"
 
 // Config represents the application configuration
 type Config struct {
-	Server   ServerConfig   `yaml:"server" mapstructure:"server"`
-	Database DatabaseConfig `yaml:"database" mapstructure:"database"`
-	Git      GitConfig      `yaml:"git" mapstructure:"git"`
-	Docker   DockerConfig   `yaml:"docker" mapstructure:"docker"`
-	Apps     []AppConfig    `yaml:"apps" mapstructure:"apps"`
+	Server      ServerConfig      `yaml:"server" mapstructure:"server"`
+	Database    DatabaseConfig    `yaml:"database" mapstructure:"database"`
+	Git         GitConfig         `yaml:"git" mapstructure:"git"`
+	GitHubOAuth GitHubOAuthConfig `yaml:"github_oauth" mapstructure:"github_oauth"`
+	Docker      DockerConfig      `yaml:"docker" mapstructure:"docker"`
+	Apps        []AppConfig       `yaml:"apps" mapstructure:"apps"`
 }
 
 // ServerConfig holds HTTP server settings
@@ -30,6 +31,12 @@ type GitConfig struct {
 	SSHKeyPath string `yaml:"ssh_key_path" mapstructure:"ssh_key_path"`
 	Username   string `yaml:"username" mapstructure:"username"`
 	Token      string `yaml:"token" mapstructure:"token"`
+}
+
+// GitHubOAuthConfig holds GitHub OAuth settings
+type GitHubOAuthConfig struct {
+	ClientID     string `yaml:"client_id" mapstructure:"client_id"`
+	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
 }
 
 // DockerConfig holds Docker client settings

@@ -92,3 +92,78 @@ func (a *App) SaveEnvVars() error {
 	a.EnvVarsJSON = sql.NullString{String: string(b), Valid: true}
 	return nil
 }
+
+// GetEnvVarsAsString returns env vars as KEY=value lines
+func (a *App) GetEnvVarsAsString() string {
+	if len(a.EnvVars) == 0 {
+		return ""
+	}
+	var lines string
+	for k, v := range a.EnvVars {
+		if lines != "" {
+			lines += "\n"
+		}
+		lines += k + "=" + v
+	}
+	return lines
+}
+
+// ParseEnvVarsFromString parses KEY=value lines into env vars map
+func (a *App) ParseEnvVarsFromString(s string) {
+	a.EnvVars = make(map[string]string)
+	if s == "" {
+		return
+	}
+	lines := splitLines(s)
+	for _, line := range lines {
+		line = trimSpace(line)
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		idx := indexOf(line, '=')
+		if idx > 0 {
+			key := trimSpace(line[:idx])
+			value := ""
+			if idx < len(line)-1 {
+				value = line[idx+1:]
+			}
+			a.EnvVars[key] = value
+		}
+	}
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
+}
+
+func indexOf(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}

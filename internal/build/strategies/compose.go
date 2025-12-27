@@ -8,9 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"homelab-cd/internal/build"
-	"homelab-cd/internal/docker"
-	"homelab-cd/internal/models"
+	"schooner/internal/build"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // ComposeStrategy builds using Docker Compose

@@ -7,7 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"homelab-cd/internal/models"
+	"schooner/internal/models"
 )
 
 // BuildQueries provides database operations for builds

@@ -12,9 +12,9 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/archive"
 
-	"homelab-cd/internal/build"
-	"homelab-cd/internal/docker"
-	"homelab-cd/internal/models"
+	"schooner/internal/build"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // DockerfileStrategy builds images using a Dockerfile
@@ -79,8 +79,8 @@ func (s *DockerfileStrategy) Build(ctx context.Context, opts build.BuildOptions)
 		Remove:     true,
 		BuildArgs:  buildArgs,
 		Labels: map[string]string{
-			"homelab-cd.app":    opts.AppName,
-			"homelab-cd.app-id": opts.AppID,
+			"schooner.app":    opts.AppName,
+			"schooner.app-id": opts.AppID,
 		},
 	}
 

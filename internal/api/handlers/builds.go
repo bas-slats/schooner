@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"homelab-cd/internal/database/queries"
+	"schooner/internal/database/queries"
 )
 
 // BuildHandler handles build-related requests

@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"homelab-cd/internal/models"
+	"schooner/internal/models"
 )
 
 // Strategy defines the interface for build methods

@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"homelab-cd/internal/docker"
-	"homelab-cd/internal/models"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // Deployer handles container deployment
@@ -118,10 +118,10 @@ func (d *Deployer) Rollback(ctx context.Context, app *models.App, targetBuild *m
 		ImageTag:      targetBuild.ImageTag.String,
 		EnvVars:       app.EnvVars,
 		Labels: map[string]string{
-			"homelab-cd.app":      app.Name,
-			"homelab-cd.app-id":   app.ID,
-			"homelab-cd.build-id": targetBuild.ID,
-			"homelab-cd.rollback": "true",
+			"schooner.app":      app.Name,
+			"schooner.app-id":   app.ID,
+			"schooner.build-id": targetBuild.ID,
+			"schooner.rollback": "true",
 		},
 	}
 

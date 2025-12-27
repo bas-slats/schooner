@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
-	"homelab-cd/internal/config"
-	"homelab-cd/internal/database/queries"
+	"schooner/internal/config"
+	"schooner/internal/database/queries"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // PageHandler handles page rendering
@@ -15,15 +19,340 @@ type PageHandler struct {
 	cfg          *config.Config
 	appQueries   *queries.AppQueries
 	buildQueries *queries.BuildQueries
+	dockerClient *docker.Client
 }
 
 // NewPageHandler creates a new PageHandler
-func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries) *PageHandler {
+func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client) *PageHandler {
 	return &PageHandler{
 		cfg:          cfg,
 		appQueries:   appQueries,
 		buildQueries: buildQueries,
+		dockerClient: dockerClient,
 	}
+}
+
+func (h *PageHandler) writeHeader(w http.ResponseWriter, title string) {
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>%s | Schooner</title>
+    <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
+    <script src="/static/js/htmx.min.js"></script>
+    <link href="/static/css/styles.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+    <nav class="bg-white border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <a href="/" class="flex items-center space-x-2">
+                <img src="/static/img/logo.svg" alt="Schooner" class="h-8 w-8">
+                <span class="text-xl font-bold">Schooner</span>
+            </a>
+            <div class="flex space-x-4">
+                <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+                <a href="/settings" class="text-gray-600 hover:text-gray-900">Settings</a>
+            </div>
+        </div>
+    </nav>
+    <main class="max-w-7xl mx-auto px-6 py-8">
+`, html.EscapeString(title))
+}
+
+func (h *PageHandler) writeFooter(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+    </main>
+    <script>
+        // Handle form submissions
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            if (evt.detail.successful) {
+                // Refresh page on successful form submission
+                if (evt.detail.elt.tagName === 'FORM') {
+                    window.location.reload();
+                }
+            }
+        });
+
+        // Confirm delete
+        function confirmDelete(appId, appName) {
+            if (confirm('Are you sure you want to delete "' + appName + '"?')) {
+                fetch('/api/apps/' + appId, { method: 'DELETE' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            alert('Failed to delete app');
+                        }
+                    });
+            }
+        }
+
+        // GitHub import functions
+        function showGitHubTokenForm() {
+            document.getElementById('github-token-form').classList.remove('hidden');
+        }
+
+        function hideGitHubTokenForm() {
+            document.getElementById('github-token-form').classList.add('hidden');
+        }
+
+        function submitGitHubToken(event) {
+            event.preventDefault();
+            const form = event.target;
+            const token = form.querySelector('input[name="github_token"]').value;
+
+            fetch('/api/settings/github-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token })
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    response.text().then(text => alert('Failed to save token: ' + text));
+                }
+            });
+        }
+
+        function removeGitHubToken() {
+            if (confirm('Are you sure you want to remove the GitHub token?')) {
+                fetch('/api/settings/github-token', { method: 'DELETE' })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.reload();
+                        } else {
+                            alert('Failed to remove token');
+                        }
+                    });
+            }
+        }
+
+        function showImportModal() {
+            document.getElementById('import-modal').classList.remove('hidden');
+            loadGitHubRepos();
+        }
+
+        function hideImportModal() {
+            document.getElementById('import-modal').classList.add('hidden');
+        }
+
+        function loadGitHubRepos(page = 1) {
+            const container = document.getElementById('github-repos-list');
+            container.innerHTML = '<div class="text-center py-8 text-gray-500">Loading repositories...</div>';
+
+            fetch('/api/github/repos?page=' + page + '&per_page=20')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch repositories');
+                    }
+                    return response.json();
+                })
+                .then(repos => {
+                    if (repos.length === 0) {
+                        container.innerHTML = '<div class="text-center py-8 text-gray-500">No repositories found</div>';
+                        return;
+                    }
+
+                    let html = '';
+                    repos.forEach(repo => {
+                        const disabled = repo.already_imported ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 cursor-pointer';
+                        const imported = repo.already_imported ? '<span class="text-xs text-green-600 ml-2">Already imported</span>' : '';
+                        const badges = [];
+                        if (repo.has_dockerfile) badges.push('<span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Dockerfile</span>');
+                        if (repo.has_compose) badges.push('<span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">Compose</span>');
+
+                        html += '<div class="p-4 border-b border-gray-200 ' + disabled + '" ' +
+                            (repo.already_imported ? '' : 'onclick="selectRepo(\'' + repo.full_name + '\', \'' + repo.default_branch + '\', ' + repo.has_dockerfile + ', ' + repo.has_compose + ', \'' + (repo.compose_file || '') + '\')"') + '>' +
+                            '<div class="flex items-center justify-between">' +
+                            '<div>' +
+                            '<div class="font-semibold">' + escapeHtml(repo.name) + imported + '</div>' +
+                            '<div class="text-sm text-gray-500">' + escapeHtml(repo.description || 'No description') + '</div>' +
+                            '</div>' +
+                            '<div class="flex items-center space-x-2">' + badges.join('') + '</div>' +
+                            '</div>' +
+                            '</div>';
+                    });
+
+                    container.innerHTML = html;
+                })
+                .catch(error => {
+                    container.innerHTML = '<div class="text-center py-8 text-red-400">' + error.message + '</div>';
+                });
+        }
+
+        function selectRepo(fullName, defaultBranch, hasDockerfile, hasCompose, composeFile) {
+            document.getElementById('import-repo-name').textContent = fullName;
+            document.getElementById('import-repo-fullname').value = fullName;
+            document.getElementById('import-branch').value = defaultBranch;
+
+            // Auto-select build strategy
+            const strategySelect = document.getElementById('import-build-strategy');
+            if (hasCompose) {
+                strategySelect.value = 'compose';
+            } else {
+                strategySelect.value = 'dockerfile';
+            }
+
+            document.getElementById('repo-selection').classList.add('hidden');
+            document.getElementById('import-config').classList.remove('hidden');
+        }
+
+        function backToRepoList() {
+            document.getElementById('import-config').classList.add('hidden');
+            document.getElementById('repo-selection').classList.remove('hidden');
+        }
+
+        function submitImport(event) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = {
+                repo_full_name: formData.get('repo_full_name'),
+                branch: formData.get('branch'),
+                build_strategy: formData.get('build_strategy'),
+                auto_deploy: formData.get('auto_deploy') === 'on'
+            };
+
+            const btn = form.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = 'Importing...';
+
+            fetch('/api/github/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    response.text().then(text => {
+                        alert('Failed to import: ' + text);
+                        btn.disabled = false;
+                        btn.textContent = 'Import & Deploy';
+                    });
+                }
+            });
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Toggle edit form
+        function toggleEditForm(appId) {
+            const form = document.getElementById('edit-form-' + appId);
+            form.classList.toggle('hidden');
+        }
+
+        // Show add app form
+        function showAddForm() {
+            document.getElementById('add-app-form').classList.remove('hidden');
+            document.getElementById('add-app-btn').classList.add('hidden');
+        }
+
+        function hideAddForm() {
+            document.getElementById('add-app-form').classList.add('hidden');
+            document.getElementById('add-app-btn').classList.remove('hidden');
+        }
+
+        // Parse env vars string to object
+        function parseEnvVars(str) {
+            const result = {};
+            if (!str) return result;
+            str.split('\n').forEach(line => {
+                line = line.trim();
+                if (!line || line.startsWith('#')) return;
+                const idx = line.indexOf('=');
+                if (idx > 0) {
+                    const key = line.substring(0, idx).trim();
+                    const value = line.substring(idx + 1);
+                    result[key] = value;
+                }
+            });
+            return result;
+        }
+
+        // Submit add app form
+        function submitAddApp(event) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = {
+                name: formData.get('name'),
+                description: formData.get('description'),
+                repo_url: formData.get('repo_url'),
+                branch: formData.get('branch') || 'main',
+                webhook_secret: formData.get('webhook_secret'),
+                build_strategy: formData.get('build_strategy') || 'dockerfile',
+                dockerfile_path: formData.get('dockerfile_path') || 'Dockerfile',
+                compose_file: formData.get('compose_file') || 'docker-compose.yaml',
+                build_context: formData.get('build_context') || '.',
+                container_name: formData.get('container_name'),
+                image_name: formData.get('image_name'),
+                env_vars: parseEnvVars(formData.get('env_vars')),
+                auto_deploy: formData.get('auto_deploy') === 'on',
+                enabled: formData.get('enabled') === 'on'
+            };
+
+            fetch('/api/apps', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    response.text().then(text => alert('Failed to add app: ' + text));
+                }
+            });
+        }
+
+        // Submit edit app form
+        function submitEditApp(event, appId) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = {
+                name: formData.get('name'),
+                description: formData.get('description'),
+                repo_url: formData.get('repo_url'),
+                branch: formData.get('branch'),
+                webhook_secret: formData.get('webhook_secret'),
+                build_strategy: formData.get('build_strategy'),
+                dockerfile_path: formData.get('dockerfile_path'),
+                compose_file: formData.get('compose_file'),
+                build_context: formData.get('build_context'),
+                container_name: formData.get('container_name'),
+                image_name: formData.get('image_name'),
+                env_vars: parseEnvVars(formData.get('env_vars')),
+                auto_deploy: formData.get('auto_deploy') === 'on',
+                enabled: formData.get('enabled') === 'on'
+            };
+
+            fetch('/api/apps/' + appId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    response.text().then(text => alert('Failed to update app: ' + text));
+                }
+            });
+        }
+    </script>
+</body>
+</html>`)
 }
 
 // Dashboard handles GET /
@@ -40,77 +369,37 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	builds, err := h.buildQueries.ListRecent(ctx, 10)
 	if err != nil {
 		slog.Error("failed to list builds", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
 	}
 
-	// TODO: Render templ template
-	// For now, return a simple HTML placeholder
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard | Homelab CD</title>
-    <script src="/static/js/htmx.min.js"></script>
-    <link href="/static/css/styles.css" rel="stylesheet">
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/" class="text-xl font-bold text-blue-400">Homelab CD</a>
-            <div class="flex space-x-4">
-                <a href="/" class="text-gray-300 hover:text-white">Dashboard</a>
-                <a href="/settings" class="text-gray-300 hover:text-white">Settings</a>
-            </div>
-        </div>
-    </nav>
-    <main class="max-w-7xl mx-auto px-6 py-8">
-        <h1 class="text-2xl font-bold mb-6">Applications</h1>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="apps">
-`))
+	h.writeHeader(w, "Dashboard")
 
-	// Render apps
-	for _, app := range apps {
-		latestBuild, _ := h.buildQueries.GetLatestByAppID(ctx, app.ID)
-		buildStatus := "no builds"
-		if latestBuild != nil {
-			buildStatus = string(latestBuild.Status)
+	fmt.Fprint(w, `<h1 class="text-2xl font-bold mb-6">Applications</h1>`)
+
+	if len(apps) == 0 {
+		fmt.Fprint(w, `
+        <div class="bg-white shadow-sm rounded-lg p-8 border border-gray-200 text-center">
+            <p class="text-gray-500 mb-4">No applications configured yet.</p>
+            <a href="/settings" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded inline-block">Add Your First App</a>
+        </div>`)
+	} else {
+		fmt.Fprint(w, `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="apps">`)
+		for _, app := range apps {
+			latestBuild, _ := h.buildQueries.GetLatestByAppID(ctx, app.ID)
+			var containerStatus *docker.ContainerStatus
+			if h.dockerClient != nil {
+				containerStatus, _ = h.dockerClient.GetContainerStatus(ctx, app.GetContainerName())
+			}
+			h.renderAppCard(w, app, latestBuild, containerStatus)
 		}
-
-		w.Write([]byte(`
-            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold">` + app.Name + `</h3>
-                    <span class="px-2 py-1 text-xs rounded-full bg-gray-700">` + buildStatus + `</span>
-                </div>
-                <p class="text-sm text-gray-400 mb-4">` + app.GetDescription() + `</p>
-                <div class="flex justify-between text-sm text-gray-500 mb-4">
-                    <span>Branch: ` + app.Branch + `</span>
-                    <span>` + string(app.BuildStrategy) + `</span>
-                </div>
-                <div class="flex space-x-2">
-                    <button
-                        class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm"
-                        hx-post="/api/apps/` + app.ID + `/deploy"
-                        hx-swap="none">
-                        Deploy
-                    </button>
-                    <a href="/apps/` + app.ID + `" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">
-                        Details
-                    </a>
-                </div>
-            </div>
-`))
+		fmt.Fprint(w, `</div>`)
 	}
 
-	w.Write([]byte(`
-        </div>
+	// Recent builds
+	fmt.Fprint(w, `
         <h2 class="text-xl font-bold mt-10 mb-4">Recent Builds</h2>
-        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
             <table class="w-full">
-                <thead class="bg-gray-700">
+                <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left text-sm">App</th>
                         <th class="px-4 py-3 text-left text-sm">Status</th>
@@ -119,34 +408,150 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                         <th class="px-4 py-3 text-left text-sm">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
-`))
+                <tbody>`)
 
-	for _, build := range builds {
-		commitSHA := build.GetShortSHA()
-		if commitSHA == "" {
-			commitSHA = "-"
-		}
-		w.Write([]byte(`
-                    <tr class="border-t border-gray-700">
-                        <td class="px-4 py-3 text-sm">` + build.AppName + `</td>
-                        <td class="px-4 py-3 text-sm">` + string(build.Status) + `</td>
-                        <td class="px-4 py-3 text-sm font-mono">` + commitSHA + `</td>
-                        <td class="px-4 py-3 text-sm">` + string(build.Trigger) + `</td>
+	if len(builds) == 0 {
+		fmt.Fprint(w, `<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No builds yet</td></tr>`)
+	} else {
+		for _, build := range builds {
+			commitSHA := build.GetShortSHA()
+			if commitSHA == "" {
+				commitSHA = "-"
+			}
+			fmt.Fprintf(w, `
+                    <tr class="border-t border-gray-200">
+                        <td class="px-4 py-3 text-sm">%s</td>
+                        <td class="px-4 py-3 text-sm">%s</td>
+                        <td class="px-4 py-3 text-sm font-mono">%s</td>
+                        <td class="px-4 py-3 text-sm">%s</td>
                         <td class="px-4 py-3 text-sm">
-                            <a href="/builds/` + build.ID + `" class="text-blue-400 hover:text-blue-300">View</a>
+                            <a href="/builds/%s" class="text-purple-600 hover:text-purple-700">View</a>
                         </td>
-                    </tr>
-`))
+                    </tr>`,
+				html.EscapeString(build.AppName),
+				html.EscapeString(string(build.Status)),
+				html.EscapeString(commitSHA),
+				html.EscapeString(string(build.Trigger)),
+				html.EscapeString(build.ID))
+		}
 	}
 
-	w.Write([]byte(`
+	fmt.Fprint(w, `
                 </tbody>
             </table>
-        </div>
-    </main>
-</body>
-</html>`))
+        </div>`)
+
+	h.writeFooter(w)
+}
+
+func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, latestBuild *models.Build, containerStatus *docker.ContainerStatus) {
+	buildStatus := "no builds"
+	statusClass := "bg-gray-50"
+	if latestBuild != nil {
+		buildStatus = string(latestBuild.Status)
+		switch latestBuild.Status {
+		case models.BuildStatusSuccess:
+			statusClass = "bg-green-100 text-green-700"
+		case models.BuildStatusFailed:
+			statusClass = "bg-red-100 text-red-700"
+		case models.BuildStatusBuilding, models.BuildStatusCloning, models.BuildStatusDeploying:
+			statusClass = "bg-blue-100 text-blue-700"
+		}
+	}
+
+	enabledBadge := ""
+	if !app.Enabled {
+		enabledBadge = `<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700 ml-2">Disabled</span>`
+	}
+
+	// Container status indicator
+	containerBadge := ""
+	if containerStatus != nil {
+		switch containerStatus.State {
+		case "running":
+			containerBadge = `<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700 ml-2">Running</span>`
+		case "exited":
+			containerBadge = `<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 ml-2">Stopped</span>`
+		case "paused":
+			containerBadge = `<span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-700 ml-2">Paused</span>`
+		case "restarting":
+			containerBadge = `<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-700 ml-2">Restarting</span>`
+		default:
+			containerBadge = fmt.Sprintf(`<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 ml-2">%s</span>`, html.EscapeString(containerStatus.State))
+		}
+	}
+
+	// Container control buttons
+	containerControls := ""
+	if h.dockerClient != nil && containerStatus != nil {
+		if containerStatus.State == "running" {
+			containerControls = fmt.Sprintf(`
+                    <button
+                        class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200"
+                        hx-post="/api/apps/%s/stop"
+                        hx-swap="none"
+                        hx-confirm="Stop container?">
+                        Stop
+                    </button>
+                    <button
+                        class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200"
+                        hx-post="/api/apps/%s/restart"
+                        hx-swap="none">
+                        Restart
+                    </button>`,
+				html.EscapeString(app.ID),
+				html.EscapeString(app.ID))
+		} else if containerStatus.State == "exited" {
+			containerControls = fmt.Sprintf(`
+                    <button
+                        class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200"
+                        hx-post="/api/apps/%s/start"
+                        hx-swap="none">
+                        Start
+                    </button>`,
+				html.EscapeString(app.ID))
+		}
+	}
+
+	fmt.Fprintf(w, `
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold">%s</h3>
+                    <div class="flex items-center">
+                        <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
+                        %s
+                        %s
+                    </div>
+                </div>
+                <p class="text-sm text-gray-500 mb-4">%s</p>
+                <div class="flex justify-between text-sm text-gray-500 mb-4">
+                    <span>Branch: %s</span>
+                    <span>%s</span>
+                </div>
+                <div class="flex space-x-2">
+                    <button
+                        class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white"
+                        hx-post="/api/apps/%s/deploy"
+                        hx-swap="none">
+                        Deploy
+                    </button>
+                    <a href="/apps/%s" class="px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded text-sm border border-gray-200">
+                        Details
+                    </a>
+                    %s
+                </div>
+            </div>`,
+		html.EscapeString(app.Name),
+		statusClass,
+		html.EscapeString(buildStatus),
+		enabledBadge,
+		containerBadge,
+		html.EscapeString(app.GetDescription()),
+		html.EscapeString(app.Branch),
+		html.EscapeString(string(app.BuildStrategy)),
+		html.EscapeString(app.ID),
+		html.EscapeString(app.ID),
+		containerControls)
 }
 
 // AppDetail handles GET /apps/{appID}
@@ -166,50 +571,43 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	builds, err := h.buildQueries.ListByAppID(ctx, appID, 20, 0)
-	if err != nil {
-		slog.Error("failed to list builds", "error", err)
-	}
+	builds, _ := h.buildQueries.ListByAppID(ctx, appID, 20, 0)
 
-	// TODO: Render templ template
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>` + app.Name + ` | Homelab CD</title>
-    <script src="/static/js/htmx.min.js"></script>
-    <link href="/static/css/styles.css" rel="stylesheet">
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/" class="text-xl font-bold text-blue-400">Homelab CD</a>
-        </div>
-    </nav>
-    <main class="max-w-7xl mx-auto px-6 py-8">
+	h.writeHeader(w, app.Name)
+
+	fmt.Fprintf(w, `
         <div class="flex items-center justify-between mb-6">
-            <h1 class="text-2xl font-bold">` + app.Name + `</h1>
+            <div class="flex items-center">
+                <a href="/" class="text-gray-500 hover:text-gray-900 mr-4">&larr; Back</a>
+                <h1 class="text-2xl font-bold">%s</h1>
+            </div>
             <button
                 class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
-                hx-post="/api/apps/` + app.ID + `/deploy"
+                hx-post="/api/apps/%s/deploy"
                 hx-swap="none">
                 Deploy Now
             </button>
         </div>
-        <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 mb-8">
+        <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200 mb-8">
             <div class="grid grid-cols-2 gap-4">
-                <div><span class="text-gray-400">Repository:</span> <span class="ml-2">` + app.RepoURL + `</span></div>
-                <div><span class="text-gray-400">Branch:</span> <span class="ml-2">` + app.Branch + `</span></div>
-                <div><span class="text-gray-400">Build Strategy:</span> <span class="ml-2">` + string(app.BuildStrategy) + `</span></div>
-                <div><span class="text-gray-400">Auto Deploy:</span> <span class="ml-2">` + boolToStr(app.AutoDeploy) + `</span></div>
+                <div><span class="text-gray-500">Repository:</span> <span class="ml-2">%s</span></div>
+                <div><span class="text-gray-500">Branch:</span> <span class="ml-2">%s</span></div>
+                <div><span class="text-gray-500">Build Strategy:</span> <span class="ml-2">%s</span></div>
+                <div><span class="text-gray-500">Auto Deploy:</span> <span class="ml-2">%s</span></div>
             </div>
-        </div>
+        </div>`,
+		html.EscapeString(app.Name),
+		html.EscapeString(app.ID),
+		html.EscapeString(app.RepoURL),
+		html.EscapeString(app.Branch),
+		html.EscapeString(string(app.BuildStrategy)),
+		boolToYesNo(app.AutoDeploy))
+
+	fmt.Fprint(w, `
         <h2 class="text-xl font-bold mb-4">Build History</h2>
-        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
             <table class="w-full">
-                <thead class="bg-gray-700">
+                <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left text-sm">Status</th>
                         <th class="px-4 py-3 text-left text-sm">Commit</th>
@@ -218,8 +616,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
                         <th class="px-4 py-3 text-left text-sm">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
-`))
+                <tbody>`)
 
 	for _, build := range builds {
 		commitSHA := build.GetShortSHA()
@@ -230,26 +627,29 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
 		if len(commitMsg) > 50 {
 			commitMsg = commitMsg[:50] + "..."
 		}
-		w.Write([]byte(`
-                    <tr class="border-t border-gray-700">
-                        <td class="px-4 py-3 text-sm">` + string(build.Status) + `</td>
-                        <td class="px-4 py-3 text-sm font-mono">` + commitSHA + `</td>
-                        <td class="px-4 py-3 text-sm">` + commitMsg + `</td>
-                        <td class="px-4 py-3 text-sm">` + string(build.Trigger) + `</td>
+		fmt.Fprintf(w, `
+                    <tr class="border-t border-gray-200">
+                        <td class="px-4 py-3 text-sm">%s</td>
+                        <td class="px-4 py-3 text-sm font-mono">%s</td>
+                        <td class="px-4 py-3 text-sm">%s</td>
+                        <td class="px-4 py-3 text-sm">%s</td>
                         <td class="px-4 py-3 text-sm">
-                            <a href="/builds/` + build.ID + `" class="text-blue-400 hover:text-blue-300">View Logs</a>
+                            <a href="/builds/%s" class="text-purple-600 hover:text-purple-700">View Logs</a>
                         </td>
-                    </tr>
-`))
+                    </tr>`,
+			html.EscapeString(string(build.Status)),
+			html.EscapeString(commitSHA),
+			html.EscapeString(commitMsg),
+			html.EscapeString(string(build.Trigger)),
+			html.EscapeString(build.ID))
 	}
 
-	w.Write([]byte(`
+	fmt.Fprint(w, `
                 </tbody>
             </table>
-        </div>
-    </main>
-</body>
-</html>`))
+        </div>`)
+
+	h.writeFooter(w)
 }
 
 // BuildDetail handles GET /builds/{buildID}
@@ -269,40 +669,24 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Render templ template with SSE log viewer
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Build ` + build.ID[:8] + ` | Homelab CD</title>
-    <script src="/static/js/htmx.min.js"></script>
-    <script src="/static/js/sse.js"></script>
-    <link href="/static/css/styles.css" rel="stylesheet">
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/" class="text-xl font-bold text-blue-400">Homelab CD</a>
-        </div>
-    </nav>
-    <main class="max-w-7xl mx-auto px-6 py-8">
+	h.writeHeader(w, "Build "+build.ID[:8])
+
+	fmt.Fprintf(w, `
         <div class="flex items-center mb-6">
-            <a href="/apps/` + build.AppID + `" class="text-gray-400 hover:text-white mr-4">&larr; Back</a>
-            <h1 class="text-2xl font-bold">Build ` + build.ID[:8] + `</h1>
+            <a href="/apps/%s" class="text-gray-500 hover:text-gray-900 mr-4">&larr; Back</a>
+            <h1 class="text-2xl font-bold">Build %s</h1>
         </div>
-        <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 mb-8">
+        <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200 mb-8">
             <div class="grid grid-cols-2 gap-4">
-                <div><span class="text-gray-400">App:</span> <span class="ml-2">` + build.AppName + `</span></div>
-                <div><span class="text-gray-400">Status:</span> <span class="ml-2">` + string(build.Status) + `</span></div>
-                <div><span class="text-gray-400">Commit:</span> <span class="ml-2 font-mono">` + build.GetShortSHA() + `</span></div>
-                <div><span class="text-gray-400">Trigger:</span> <span class="ml-2">` + string(build.Trigger) + `</span></div>
+                <div><span class="text-gray-500">App:</span> <span class="ml-2">%s</span></div>
+                <div><span class="text-gray-500">Status:</span> <span class="ml-2">%s</span></div>
+                <div><span class="text-gray-500">Commit:</span> <span class="ml-2 font-mono">%s</span></div>
+                <div><span class="text-gray-500">Trigger:</span> <span class="ml-2">%s</span></div>
             </div>
         </div>
         <h2 class="text-xl font-bold mb-4">Build Logs</h2>
-        <div class="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-            <div class="bg-gray-800 px-4 py-2 border-b border-gray-700 flex justify-between items-center">
+        <div class="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+            <div class="bg-white shadow-sm px-4 py-2 border-b border-gray-200 flex justify-between items-center">
                 <h4 class="text-sm font-medium text-gray-300">Output</h4>
                 <button class="text-xs text-gray-500 hover:text-gray-300" onclick="scrollToBottom()">Scroll to bottom</button>
             </div>
@@ -310,18 +694,15 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
                 Loading logs...
             </div>
         </div>
-    </main>
     <script>
         const logContent = document.getElementById('log-content');
-        const buildID = '` + build.ID + `';
+        const buildID = '%s';
 
         function scrollToBottom() {
             logContent.scrollTop = logContent.scrollHeight;
         }
 
-        // Connect to SSE stream
         const eventSource = new EventSource('/api/builds/' + buildID + '/logs/stream');
-
         logContent.innerHTML = '';
 
         eventSource.addEventListener('log', function(e) {
@@ -329,7 +710,7 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
             const line = document.createElement('div');
             line.className = 'log-line ' + log.level;
             const timestamp = new Date(log.timestamp).toLocaleTimeString();
-            line.innerHTML = '<span class="text-gray-600">' + timestamp + '</span> <span class="ml-2">' + log.message + '</span>';
+            line.innerHTML = '<span class="text-gray-600">' + timestamp + '</span> <span class="ml-2">' + escapeHtml(log.message) + '</span>';
             logContent.appendChild(line);
             scrollToBottom();
         });
@@ -337,7 +718,7 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
         eventSource.addEventListener('complete', function(e) {
             const data = JSON.parse(e.data);
             const line = document.createElement('div');
-            line.className = 'log-line text-blue-400 font-bold mt-4';
+            line.className = 'log-line text-purple-600 font-bold mt-4';
             line.textContent = 'Build ' + data.status;
             logContent.appendChild(line);
             eventSource.close();
@@ -346,42 +727,480 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
         eventSource.onerror = function() {
             eventSource.close();
         };
-    </script>
-</body>
-</html>`))
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>`,
+		html.EscapeString(build.AppID),
+		html.EscapeString(build.ID[:8]),
+		html.EscapeString(build.AppName),
+		html.EscapeString(string(build.Status)),
+		html.EscapeString(build.GetShortSHA()),
+		html.EscapeString(string(build.Trigger)),
+		html.EscapeString(build.ID))
+
+	h.writeFooter(w)
 }
 
 // Settings handles GET /settings
 func (h *PageHandler) Settings(w http.ResponseWriter, r *http.Request) {
-	// TODO: Render settings page
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Settings | Homelab CD</title>
-    <link href="/static/css/styles.css" rel="stylesheet">
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/" class="text-xl font-bold text-blue-400">Homelab CD</a>
-        </div>
-    </nav>
-    <main class="max-w-7xl mx-auto px-6 py-8">
+	ctx := r.Context()
+
+	apps, err := h.appQueries.List(ctx)
+	if err != nil {
+		slog.Error("failed to list apps", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeHeader(w, "Settings")
+
+	fmt.Fprint(w, `
         <h1 class="text-2xl font-bold mb-6">Settings</h1>
-        <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <p class="text-gray-400">Settings are configured via config.yaml</p>
-        </div>
-    </main>
-</body>
-</html>`))
+
+        <div class="mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Applications</h2>
+                <div class="flex space-x-2">
+                    <button id="import-github-btn" onclick="showImportModal()" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                        Import from GitHub
+                    </button>
+                    <button id="add-app-btn" onclick="showAddForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded">
+                        Add Application
+                    </button>
+                </div>
+            </div>`)
+
+	// Add app form (hidden by default)
+	h.renderAddAppForm(w)
+
+	// List existing apps
+	if len(apps) == 0 {
+		fmt.Fprint(w, `
+            <div class="bg-white shadow-sm rounded-lg p-8 border border-gray-200 text-center">
+                <p class="text-gray-500">No applications configured. Click "Add Application" to get started.</p>
+            </div>`)
+	} else {
+		fmt.Fprint(w, `<div class="space-y-4">`)
+		for _, app := range apps {
+			h.renderAppSettings(w, app)
+		}
+		fmt.Fprint(w, `</div>`)
+	}
+
+	fmt.Fprint(w, `</div>`)
+
+	// Webhook info
+	fmt.Fprintf(w, `
+        <div class="mt-8">
+            <h2 class="text-xl font-bold mb-4">Webhook Configuration</h2>
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <p class="text-gray-500 mb-4">Configure GitHub webhooks to trigger automatic deployments:</p>
+                <div class="bg-gray-50 rounded p-4 font-mono text-sm mb-4">
+                    <p><span class="text-gray-500">Webhook URL:</span> <span class="text-purple-600">%s/webhook/github</span></p>
+                    <p><span class="text-gray-500">Content type:</span> application/json</p>
+                    <p><span class="text-gray-500">Events:</span> Push events</p>
+                </div>
+                <p class="text-gray-500 text-sm">For app-specific webhooks, use: <code class="bg-gray-50 px-2 py-1 rounded">%s/webhook/github/{app-id}</code></p>
+            </div>
+        </div>`,
+		html.EscapeString(h.cfg.Server.BaseURL),
+		html.EscapeString(h.cfg.Server.BaseURL))
+
+	// Clone Directory Setting
+	h.renderCloneDirectorySettings(w)
+
+	// GitHub Integration
+	h.renderGitHubIntegration(w)
+
+	// Import modal
+	h.renderImportModal(w)
+
+	h.writeFooter(w)
 }
 
-func boolToStr(b bool) string {
+func (h *PageHandler) renderCloneDirectorySettings(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div class="mt-8">
+            <h2 class="text-xl font-bold mb-4">Clone Directory</h2>
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <p class="text-gray-500 mb-4">Configure the root directory where repositories are cloned for builds.</p>
+                <div id="clone-directory-config">
+                    <form onsubmit="submitCloneDirectory(event)" class="flex items-end space-x-4">
+                        <div class="flex-1">
+                            <label class="block text-sm text-gray-500 mb-1">Clone Directory Path</label>
+                            <input type="text" name="clone_directory" id="clone-directory-input"
+                                placeholder="./data/repos"
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save</button>
+                    </form>
+                    <p class="text-xs text-gray-400 mt-2">This is where project repositories will be cloned for building. Make sure the directory exists and is writable.</p>
+                </div>
+            </div>
+        </div>
+        <script>
+            // Load current clone directory on page load
+            fetch('/api/settings/clone-directory')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('clone-directory-input').value = data.clone_directory || './data/repos';
+                });
+
+            function submitCloneDirectory(event) {
+                event.preventDefault();
+                const form = event.target;
+                const cloneDir = form.querySelector('input[name="clone_directory"]').value;
+
+                fetch('/api/settings/clone-directory', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clone_directory: cloneDir })
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('Clone directory saved successfully');
+                    } else {
+                        response.text().then(text => alert('Failed to save: ' + text));
+                    }
+                });
+            }
+        </script>`)
+}
+
+func (h *PageHandler) renderGitHubIntegration(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div class="mt-8">
+            <h2 class="text-xl font-bold mb-4">GitHub Integration</h2>
+            <div class="bg-white shadow-sm rounded-lg p-6 border border-gray-200">
+                <div id="github-status">
+                    <p class="text-gray-500 mb-4">Connect your GitHub account to import repositories directly.</p>
+                    <div id="github-connected" class="hidden">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center">
+                                <svg class="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="text-green-600">Connected as </span>
+                                <span id="github-username" class="text-green-600 font-semibold ml-1"></span>
+                            </div>
+                            <button onclick="removeGitHubToken()" class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white">Disconnect</button>
+                        </div>
+                    </div>
+                    <div id="github-not-connected">
+                        <div id="oauth-available" class="hidden">
+                            <a href="/oauth/github/login" class="inline-flex items-center px-4 py-2 bg-gray-900 hover:bg-gray-800 rounded text-white">
+                                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                                Login with GitHub
+                            </a>
+                        </div>
+                        <div id="oauth-not-available">
+                            <p class="text-gray-500">To enable GitHub login, configure OAuth in your config file:</p>
+                            <pre class="mt-2 p-3 bg-gray-50 rounded text-sm font-mono text-gray-700">github_oauth:
+  client_id: "your-client-id"
+  client_secret: "your-secret"</pre>
+                            <p class="text-xs text-gray-400 mt-2">Create an OAuth App at <a href="https://github.com/settings/developers" target="_blank" class="text-purple-600 hover:text-purple-700">github.com/settings/developers</a></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+            // Check GitHub status on page load
+            Promise.all([
+                fetch('/api/settings/github-status').then(r => r.json()),
+                fetch('/oauth/github/status').then(r => r.json())
+            ]).then(([githubStatus, oauthStatus]) => {
+                if (githubStatus.configured) {
+                    document.getElementById('github-connected').classList.remove('hidden');
+                    document.getElementById('github-not-connected').classList.add('hidden');
+                    document.getElementById('github-username').textContent = githubStatus.username;
+                } else {
+                    if (oauthStatus.oauth_configured) {
+                        document.getElementById('oauth-available').classList.remove('hidden');
+                        document.getElementById('oauth-not-available').classList.add('hidden');
+                    }
+                }
+            });
+        </script>`)
+}
+
+func (h *PageHandler) renderImportModal(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+        <div id="import-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white shadow-sm rounded-lg w-full max-w-2xl max-h-[80vh] overflow-hidden">
+                <div class="flex items-center justify-between p-4 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold">Import from GitHub</h3>
+                    <button onclick="hideImportModal()" class="text-gray-500 hover:text-gray-900 text-2xl">&times;</button>
+                </div>
+
+                <div id="repo-selection">
+                    <div id="github-repos-list" class="overflow-y-auto max-h-96">
+                        <div class="text-center py-8 text-gray-500">Loading repositories...</div>
+                    </div>
+                </div>
+
+                <div id="import-config" class="hidden p-4">
+                    <div class="mb-4">
+                        <button onclick="backToRepoList()" class="text-gray-500 hover:text-gray-900 text-sm">&larr; Back to repository list</button>
+                    </div>
+                    <div class="mb-4">
+                        <span class="text-gray-500">Selected repository:</span>
+                        <span id="import-repo-name" class="font-semibold ml-2"></span>
+                    </div>
+                    <form onsubmit="submitImport(event)">
+                        <input type="hidden" name="repo_full_name" id="import-repo-fullname">
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm text-gray-500 mb-1">Branch</label>
+                                <input type="text" name="branch" id="import-branch" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-500 mb-1">Build Strategy</label>
+                                <select name="build_strategy" id="import-build-strategy" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                    <option value="dockerfile">Dockerfile</option>
+                                    <option value="compose">Docker Compose</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="flex items-center">
+                                <input type="checkbox" name="auto_deploy" checked class="mr-2">
+                                <span class="text-sm text-gray-500">Auto deploy on push</span>
+                            </label>
+                        </div>
+                        <div class="flex justify-end space-x-2">
+                            <button type="button" onclick="hideImportModal()" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded">Import & Deploy</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>`)
+}
+
+func (h *PageHandler) renderAddAppForm(w http.ResponseWriter) {
+	fmt.Fprint(w, `
+            <div id="add-app-form" class="hidden bg-white shadow-sm rounded-lg p-6 border border-gray-200 mb-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold">Add New Application</h3>
+                    <button onclick="hideAddForm()" class="text-gray-500 hover:text-gray-900">&times;</button>
+                </div>
+                <form onsubmit="submitAddApp(event)">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Name *</label>
+                            <input type="text" name="name" required class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Description</label>
+                            <input type="text" name="description" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Repository URL *</label>
+                            <input type="text" name="repo_url" required placeholder="https://github.com/user/repo.git" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Branch</label>
+                            <input type="text" name="branch" placeholder="main" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Build Strategy</label>
+                            <select name="build_strategy" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                <option value="dockerfile">Dockerfile</option>
+                                <option value="compose">Docker Compose</option>
+                                <option value="buildpacks">Buildpacks</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Webhook Secret</label>
+                            <input type="text" name="webhook_secret" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Dockerfile Path</label>
+                            <input type="text" name="dockerfile_path" placeholder="Dockerfile" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Build Context</label>
+                            <input type="text" name="build_context" placeholder="." class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Container Name</label>
+                            <input type="text" name="container_name" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Image Name</label>
+                            <input type="text" name="image_name" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                        </div>
+                        <div class="col-span-2">
+                            <label class="block text-sm text-gray-500 mb-1">Environment Variables</label>
+                            <textarea name="env_vars" rows="3" placeholder="KEY=value&#10;ANOTHER_KEY=another_value" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900 font-mono text-sm"></textarea>
+                            <p class="text-xs text-gray-400 mt-1">One per line: KEY=value</p>
+                        </div>
+                        <div class="flex items-center space-x-4 col-span-2">
+                            <label class="flex items-center">
+                                <input type="checkbox" name="auto_deploy" checked class="mr-2">
+                                <span class="text-sm text-gray-500">Auto Deploy on Push</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="enabled" checked class="mr-2">
+                                <span class="text-sm text-gray-500">Enabled</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-2 mt-4">
+                        <button type="button" onclick="hideAddForm()" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Add Application</button>
+                    </div>
+                </form>
+            </div>`)
+}
+
+func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) {
+	enabledClass := "bg-green-100 text-green-700"
+	enabledText := "Enabled"
+	if !app.Enabled {
+		enabledClass = "bg-red-100 text-red-700"
+		enabledText = "Disabled"
+	}
+
+	fmt.Fprintf(w, `
+                <div class="bg-white shadow-sm rounded-lg border border-gray-200">
+                    <div class="p-4 flex items-center justify-between cursor-pointer" onclick="toggleEditForm('%s')">
+                        <div class="flex items-center space-x-4">
+                            <h3 class="font-semibold">%s</h3>
+                            <span class="px-2 py-1 text-xs rounded-full %s">%s</span>
+                            <span class="text-gray-500 text-sm">%s</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-gray-500 text-sm">%s</span>
+                            <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div id="edit-form-%s" class="hidden border-t border-gray-200 p-4">
+                        <form onsubmit="submitEditApp(event, '%s')">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Name</label>
+                                    <input type="text" name="name" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Description</label>
+                                    <input type="text" name="description" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Repository URL</label>
+                                    <input type="text" name="repo_url" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Branch</label>
+                                    <input type="text" name="branch" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Build Strategy</label>
+                                    <select name="build_strategy" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                        <option value="dockerfile" %s>Dockerfile</option>
+                                        <option value="compose" %s>Docker Compose</option>
+                                        <option value="buildpacks" %s>Buildpacks</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Webhook Secret</label>
+                                    <input type="text" name="webhook_secret" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Dockerfile Path</label>
+                                    <input type="text" name="dockerfile_path" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Build Context</label>
+                                    <input type="text" name="build_context" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Container Name</label>
+                                    <input type="text" name="container_name" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-500 mb-1">Image Name</label>
+                                    <input type="text" name="image_name" value="%s" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm text-gray-500 mb-1">Environment Variables</label>
+                                    <textarea name="env_vars" rows="3" placeholder="KEY=value&#10;ANOTHER_KEY=another_value" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900 font-mono text-sm">%s</textarea>
+                                    <p class="text-xs text-gray-400 mt-1">One per line: KEY=value</p>
+                                </div>
+                                <div class="flex items-center space-x-4 col-span-2">
+                                    <label class="flex items-center">
+                                        <input type="checkbox" name="auto_deploy" %s class="mr-2">
+                                        <span class="text-sm text-gray-500">Auto Deploy</span>
+                                    </label>
+                                    <label class="flex items-center">
+                                        <input type="checkbox" name="enabled" %s class="mr-2">
+                                        <span class="text-sm text-gray-500">Enabled</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="flex justify-between mt-4">
+                                <button type="button" onclick="confirmDelete('%s', '%s')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white">Delete</button>
+                                <div class="flex space-x-2">
+                                    <button type="button" onclick="toggleEditForm('%s')" class="px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200">Cancel</button>
+                                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save Changes</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>`,
+		app.ID,
+		html.EscapeString(app.Name),
+		enabledClass,
+		enabledText,
+		html.EscapeString(string(app.BuildStrategy)),
+		html.EscapeString(app.Branch),
+		app.ID,
+		app.ID,
+		html.EscapeString(app.Name),
+		html.EscapeString(app.GetDescription()),
+		html.EscapeString(app.RepoURL),
+		html.EscapeString(app.Branch),
+		selected(app.BuildStrategy == models.BuildStrategyDockerfile),
+		selected(app.BuildStrategy == models.BuildStrategyCompose),
+		selected(app.BuildStrategy == models.BuildStrategyBuildpacks),
+		html.EscapeString(app.GetWebhookSecret()),
+		html.EscapeString(app.DockerfilePath),
+		html.EscapeString(app.BuildContext),
+		html.EscapeString(app.GetContainerName()),
+		html.EscapeString(app.GetImageName()),
+		html.EscapeString(app.GetEnvVarsAsString()),
+		checked(app.AutoDeploy),
+		checked(app.Enabled),
+		app.ID,
+		html.EscapeString(app.Name),
+		app.ID)
+}
+
+func boolToYesNo(b bool) string {
 	if b {
 		return "Yes"
 	}
 	return "No"
+}
+
+func checked(b bool) string {
+	if b {
+		return "checked"
+	}
+	return ""
+}
+
+func selected(b bool) string {
+	if b {
+		return "selected"
+	}
+	return ""
 }

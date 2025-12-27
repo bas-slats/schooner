@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"homelab-cd/internal/database"
-	"homelab-cd/internal/database/queries"
-	"homelab-cd/internal/docker"
-	"homelab-cd/internal/git"
-	"homelab-cd/internal/models"
+	"schooner/internal/database"
+	"schooner/internal/database/queries"
+	"schooner/internal/docker"
+	"schooner/internal/git"
+	"schooner/internal/models"
 )
 
 // Orchestrator coordinates build execution
@@ -228,7 +228,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 	// Deploy based on strategy
 	if app.BuildStrategy == models.BuildStrategyCompose {
 		// For compose, run docker compose up
-		composeStrategy := strategy.(*composeStrategyWrapper)
+		composeStrategy := strategy.(composeStrategyWrapper)
 		if err := composeStrategy.Up(ctx, buildOpts); err != nil {
 			logger.Error("deploy failed", "error", err)
 			fmt.Fprintf(logWriter, "ERROR: Deploy failed: %s\n", err)
@@ -245,9 +245,9 @@ func (o *Orchestrator) processBuild(buildID string) {
 			Env:           envMapToSlice(app.EnvVars),
 			RestartPolicy: "unless-stopped",
 			Labels: map[string]string{
-				"homelab-cd.app":      app.Name,
-				"homelab-cd.app-id":   app.ID,
-				"homelab-cd.build-id": build.ID,
+				"schooner.app":      app.Name,
+				"schooner.app-id":   app.ID,
+				"schooner.build-id": build.ID,
 			},
 		}
 

@@ -14,10 +14,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"homelab-cd/internal/config"
-	"homelab-cd/internal/database"
-	"homelab-cd/internal/database/queries"
-	"homelab-cd/internal/models"
+	"schooner/internal/config"
+	"schooner/internal/database"
+	"schooner/internal/database/queries"
+	"schooner/internal/models"
 )
 
 // WebhookHandler handles GitHub webhook requests

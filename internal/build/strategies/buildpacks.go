@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os/exec"
 
-	"homelab-cd/internal/build"
-	"homelab-cd/internal/docker"
-	"homelab-cd/internal/models"
+	"schooner/internal/build"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // DefaultBuilder is the default Cloud Native Buildpacks builder

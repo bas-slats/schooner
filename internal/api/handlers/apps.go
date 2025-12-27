@@ -1,27 +1,52 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
-	"homelab-cd/internal/database/queries"
+	"schooner/internal/database/queries"
+	"schooner/internal/docker"
+	"schooner/internal/models"
 )
 
 // AppHandler handles app-related requests
 type AppHandler struct {
 	appQueries   *queries.AppQueries
 	buildQueries *queries.BuildQueries
+	dockerClient *docker.Client
 }
 
 // NewAppHandler creates a new AppHandler
-func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries) *AppHandler {
+func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client) *AppHandler {
 	return &AppHandler{
 		appQueries:   appQueries,
 		buildQueries: buildQueries,
+		dockerClient: dockerClient,
 	}
+}
+
+// AppCreateRequest represents the request body for creating an app
+type AppCreateRequest struct {
+	Name           string            `json:"name"`
+	Description    string            `json:"description"`
+	RepoURL        string            `json:"repo_url"`
+	Branch         string            `json:"branch"`
+	WebhookSecret  string            `json:"webhook_secret"`
+	BuildStrategy  string            `json:"build_strategy"`
+	DockerfilePath string            `json:"dockerfile_path"`
+	ComposeFile    string            `json:"compose_file"`
+	BuildContext   string            `json:"build_context"`
+	ContainerName  string            `json:"container_name"`
+	ImageName      string            `json:"image_name"`
+	EnvVars        map[string]string `json:"env_vars"`
+	AutoDeploy     bool              `json:"auto_deploy"`
+	Enabled        bool              `json:"enabled"`
 }
 
 // List handles GET /api/apps
@@ -62,23 +87,185 @@ func (h *AppHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create handles POST /api/apps
 func (h *AppHandler) Create(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement app creation from API
-	http.Error(w, "not implemented - apps are defined in config.yaml", http.StatusNotImplemented)
+	ctx := r.Context()
+
+	var req AppCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if req.RepoURL == "" {
+		http.Error(w, "repo_url is required", http.StatusBadRequest)
+		return
+	}
+
+	// Set defaults
+	if req.Branch == "" {
+		req.Branch = "main"
+	}
+	if req.BuildStrategy == "" {
+		req.BuildStrategy = "dockerfile"
+	}
+	if req.DockerfilePath == "" {
+		req.DockerfilePath = "Dockerfile"
+	}
+	if req.ComposeFile == "" {
+		req.ComposeFile = "docker-compose.yaml"
+	}
+	if req.BuildContext == "" {
+		req.BuildContext = "."
+	}
+
+	// Create app
+	app := &models.App{
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		Description:    sql.NullString{String: req.Description, Valid: req.Description != ""},
+		RepoURL:        req.RepoURL,
+		Branch:         req.Branch,
+		WebhookSecret:  sql.NullString{String: req.WebhookSecret, Valid: req.WebhookSecret != ""},
+		BuildStrategy:  models.BuildStrategy(req.BuildStrategy),
+		DockerfilePath: req.DockerfilePath,
+		ComposeFile:    req.ComposeFile,
+		BuildContext:   req.BuildContext,
+		ContainerName:  sql.NullString{String: req.ContainerName, Valid: req.ContainerName != ""},
+		ImageName:      sql.NullString{String: req.ImageName, Valid: req.ImageName != ""},
+		EnvVars:        req.EnvVars,
+		AutoDeploy:     req.AutoDeploy,
+		Enabled:        req.Enabled,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	// Save env vars
+	if err := app.SaveEnvVars(); err != nil {
+		slog.Error("failed to save env vars", "error", err)
+		http.Error(w, "failed to save env vars", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.appQueries.Create(ctx, app); err != nil {
+		slog.Error("failed to create app", "error", err)
+		http.Error(w, "failed to create app: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("app created", "id", app.ID, "name", app.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(app)
 }
 
 // Update handles PUT /api/apps/{appID}
 func (h *AppHandler) Update(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement app update
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	// Get existing app
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	var req AppCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Update fields
+	if req.Name != "" {
+		app.Name = req.Name
+	}
+	app.Description = sql.NullString{String: req.Description, Valid: req.Description != ""}
+	if req.RepoURL != "" {
+		app.RepoURL = req.RepoURL
+	}
+	if req.Branch != "" {
+		app.Branch = req.Branch
+	}
+	app.WebhookSecret = sql.NullString{String: req.WebhookSecret, Valid: req.WebhookSecret != ""}
+	if req.BuildStrategy != "" {
+		app.BuildStrategy = models.BuildStrategy(req.BuildStrategy)
+	}
+	if req.DockerfilePath != "" {
+		app.DockerfilePath = req.DockerfilePath
+	}
+	if req.ComposeFile != "" {
+		app.ComposeFile = req.ComposeFile
+	}
+	if req.BuildContext != "" {
+		app.BuildContext = req.BuildContext
+	}
+	app.ContainerName = sql.NullString{String: req.ContainerName, Valid: req.ContainerName != ""}
+	app.ImageName = sql.NullString{String: req.ImageName, Valid: req.ImageName != ""}
+	app.EnvVars = req.EnvVars
+	app.AutoDeploy = req.AutoDeploy
+	app.Enabled = req.Enabled
+
+	// Save env vars
+	if err := app.SaveEnvVars(); err != nil {
+		slog.Error("failed to save env vars", "error", err)
+		http.Error(w, "failed to save env vars", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.appQueries.Update(ctx, app); err != nil {
+		slog.Error("failed to update app", "error", err)
+		http.Error(w, "failed to update app: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("app updated", "id", app.ID, "name", app.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(app)
 }
 
 // Delete handles DELETE /api/apps/{appID}
 func (h *AppHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement app deletion
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	// Check if app exists
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.appQueries.Delete(ctx, appID); err != nil {
+		slog.Error("failed to delete app", "appID", appID, "error", err)
+		http.Error(w, "failed to delete app", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("app deleted", "id", appID, "name", app.Name)
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// Status handles GET /api/apps/{appID}/status - returns HTMX partial
+// Status handles GET /api/apps/{appID}/status - returns container status
 func (h *AppHandler) Status(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	appID := chi.URLParam(r, "appID")
@@ -98,10 +285,12 @@ func (h *AppHandler) Status(w http.ResponseWriter, r *http.Request) {
 	// Get latest build
 	latestBuild, _ := h.buildQueries.GetLatestByAppID(ctx, appID)
 
-	// TODO: Get container status from Docker
-	containerStatus := "unknown"
+	// Get container status from Docker
+	var containerStatus *docker.ContainerStatus
+	if h.dockerClient != nil {
+		containerStatus, _ = h.dockerClient.GetContainerStatus(ctx, app.GetContainerName())
+	}
 
-	// Return JSON for now, will return HTMX partial when templates are set up
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"app":              app,
@@ -138,12 +327,146 @@ func (h *AppHandler) TriggerDeploy(w http.ResponseWriter, r *http.Request) {
 
 // Stop handles POST /api/apps/{appID}/stop
 func (h *AppHandler) Stop(w http.ResponseWriter, r *http.Request) {
-	// TODO: Stop container via Docker client
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	if h.dockerClient == nil {
+		http.Error(w, "Docker client not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := h.dockerClient.StopContainer(ctx, app.GetContainerName(), 30*time.Second); err != nil {
+		slog.Error("failed to stop container", "app", app.Name, "error", err)
+		http.Error(w, "failed to stop container: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("container stopped", "app", app.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "stopped",
+		"message": "Container stopped successfully",
+	})
 }
 
 // Start handles POST /api/apps/{appID}/start
 func (h *AppHandler) Start(w http.ResponseWriter, r *http.Request) {
-	// TODO: Start container via Docker client
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	if h.dockerClient == nil {
+		http.Error(w, "Docker client not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := h.dockerClient.StartContainer(ctx, app.GetContainerName()); err != nil {
+		slog.Error("failed to start container", "app", app.Name, "error", err)
+		http.Error(w, "failed to start container: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("container started", "app", app.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "started",
+		"message": "Container started successfully",
+	})
+}
+
+// Restart handles POST /api/apps/{appID}/restart
+func (h *AppHandler) Restart(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	appID := chi.URLParam(r, "appID")
+
+	app, err := h.appQueries.GetByID(ctx, appID)
+	if err != nil {
+		slog.Error("failed to get app", "appID", appID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if app == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	if h.dockerClient == nil {
+		http.Error(w, "Docker client not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := h.dockerClient.RestartContainer(ctx, app.GetContainerName(), 30*time.Second); err != nil {
+		slog.Error("failed to restart container", "app", app.Name, "error", err)
+		http.Error(w, "failed to restart container: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("container restarted", "app", app.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "restarted",
+		"message": "Container restarted successfully",
+	})
+}
+
+// AllStatuses handles GET /api/apps/statuses - returns all app container statuses
+func (h *AppHandler) AllStatuses(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	apps, err := h.appQueries.List(ctx)
+	if err != nil {
+		slog.Error("failed to list apps", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type AppStatus struct {
+		AppID           string                  `json:"app_id"`
+		AppName         string                  `json:"app_name"`
+		ContainerStatus *docker.ContainerStatus `json:"container_status"`
+	}
+
+	statuses := make([]AppStatus, 0, len(apps))
+	for _, app := range apps {
+		status := AppStatus{
+			AppID:   app.ID,
+			AppName: app.Name,
+		}
+
+		if h.dockerClient != nil {
+			status.ContainerStatus, _ = h.dockerClient.GetContainerStatus(ctx, app.GetContainerName())
+		}
+
+		statuses = append(statuses, status)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(statuses)
 }

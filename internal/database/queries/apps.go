@@ -8,7 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"homelab-cd/internal/models"
+	"schooner/internal/models"
 )
 
 // AppQueries provides database operations for apps
