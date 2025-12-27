@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"schooner/internal/build"
 	"schooner/internal/docker"
@@ -147,6 +148,16 @@ func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error
 
 	fmt.Fprintf(opts.LogWriter, "Starting services with Docker Compose\n")
 
+	// Write .env file with app's environment variables
+	if len(opts.EnvVars) > 0 {
+		envFilePath := filepath.Join(opts.RepoPath, ".env")
+		if err := writeEnvFile(envFilePath, opts.EnvVars); err != nil {
+			fmt.Fprintf(opts.LogWriter, "Warning: failed to write .env file: %v\n", err)
+		} else {
+			fmt.Fprintf(opts.LogWriter, "Wrote %d environment variables to .env\n", len(opts.EnvVars))
+		}
+	}
+
 	// Build environment
 	env := os.Environ()
 	for k, v := range opts.EnvVars {
@@ -190,6 +201,26 @@ func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error
 	}
 
 	fmt.Fprintf(opts.LogWriter, "Services started\n")
+	return nil
+}
+
+// writeEnvFile writes environment variables to a .env file
+func writeEnvFile(path string, envVars map[string]string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for k, v := range envVars {
+		// Escape values that contain special characters
+		if strings.ContainsAny(v, " \t\n\"'$`\\") {
+			v = "\"" + strings.ReplaceAll(v, "\"", "\\\"") + "\""
+		}
+		if _, err := fmt.Fprintf(f, "%s=%s\n", k, v); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
