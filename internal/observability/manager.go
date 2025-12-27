@@ -175,8 +175,12 @@ func (m *Manager) startLoki(ctx context.Context, dataDir string) error {
 	_ = m.dockerClient.StopContainer(ctx, lokiContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, lokiContainer)
 
-	// Write loki config to a temp file that Docker can access
-	lokiConfigPath := filepath.Join(dataDir, "loki-config.yaml")
+	// Convert to absolute path for Docker mount
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	lokiConfigPath := filepath.Join(absDataDir, "loki-config.yaml")
 
 	containerConfig := docker.ContainerConfig{
 		Name:  lokiContainer,
@@ -223,6 +227,12 @@ func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
 	_ = m.dockerClient.StopContainer(ctx, promtailContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, promtailContainer)
 
+	// Convert to absolute path for Docker mount
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
 	containerConfig := docker.ContainerConfig{
 		Name:  promtailContainer,
 		Image: promtailImage,
@@ -232,10 +242,10 @@ func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
 			"schooner.service": "promtail",
 		},
 		Volumes: map[string]string{
-			"/var/run/docker.sock":                         "/var/run/docker.sock:ro",
-			"/var/lib/docker/containers":                   "/var/lib/docker/containers:ro",
-			filepath.Join(dataDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
-			"schooner-promtail-data":                       "/tmp",
+			"/var/run/docker.sock":                            "/var/run/docker.sock:ro",
+			"/var/lib/docker/containers":                      "/var/lib/docker/containers:ro",
+			filepath.Join(absDataDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
+			"schooner-promtail-data":                          "/tmp",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -256,6 +266,12 @@ func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) er
 	_ = m.dockerClient.StopContainer(ctx, grafanaContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, grafanaContainer)
 
+	// Convert to absolute path for Docker mount
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
 	// Get or generate admin password
 	adminPassword := "admin" // Default, should be changed
 	if m.settingsQueries != nil {
@@ -275,8 +291,8 @@ func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) er
 			"3000": fmt.Sprintf("%d", port),
 		},
 		Volumes: map[string]string{
-			"schooner-grafana-data":                        "/var/lib/grafana",
-			filepath.Join(dataDir, "grafana-provisioning"): "/etc/grafana/provisioning",
+			"schooner-grafana-data":                           "/var/lib/grafana",
+			filepath.Join(absDataDir, "grafana-provisioning"): "/etc/grafana/provisioning",
 		},
 		Env: []string{
 			"GF_SECURITY_ADMIN_PASSWORD=" + adminPassword,
