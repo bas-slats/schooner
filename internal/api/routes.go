@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -46,8 +47,12 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	// Initialize auth middleware
 	authMiddleware := auth.NewMiddleware(sessionStore, "/oauth/github/login")
 
-	// Initialize GitHub client (token loaded from settings if available)
+	// Initialize GitHub client and load token from settings if available
 	githubClient := github.NewClient("")
+	if token, err := settingsQueries.Get(context.Background(), "github_token"); err == nil && token != "" {
+		githubClient.SetToken(token)
+		slog.Info("GitHub token loaded from settings")
+	}
 
 	// Initialize Docker client
 	dockerClient, err := docker.NewClient()
