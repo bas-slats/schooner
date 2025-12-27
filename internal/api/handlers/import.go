@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"schooner/internal/config"
 	"schooner/internal/database/queries"
 	"schooner/internal/github"
 	"schooner/internal/models"
@@ -18,13 +22,15 @@ import (
 
 // ImportHandler handles GitHub import requests
 type ImportHandler struct {
+	cfg          *config.Config
 	githubClient *github.Client
 	appQueries   *queries.AppQueries
 }
 
 // NewImportHandler creates a new ImportHandler
-func NewImportHandler(githubClient *github.Client, appQueries *queries.AppQueries) *ImportHandler {
+func NewImportHandler(cfg *config.Config, githubClient *github.Client, appQueries *queries.AppQueries) *ImportHandler {
 	return &ImportHandler{
+		cfg:          cfg,
 		githubClient: githubClient,
 		appQueries:   appQueries,
 	}
@@ -194,11 +200,52 @@ func (h *ImportHandler) ImportRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("app imported from GitHub", "id", app.ID, "name", app.Name, "repo", req.RepoFullName)
+	// Auto-install GitHub webhook
+	webhookInstalled := false
+	if h.githubClient.HasToken() && h.cfg.Server.BaseURL != "" {
+		webhookInstalled = h.installWebhook(ctx, app, owner, repoName)
+	}
+
+	slog.Info("app imported from GitHub", "id", app.ID, "name", app.Name, "repo", req.RepoFullName, "webhookInstalled", webhookInstalled)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(app)
+}
+
+// installWebhook attempts to install a GitHub webhook for the app
+func (h *ImportHandler) installWebhook(ctx context.Context, app *models.App, owner, repo string) bool {
+	// Generate webhook secret
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		slog.Warn("failed to generate webhook secret", "error", err)
+		return false
+	}
+	secret := hex.EncodeToString(secretBytes)
+
+	// Save secret to app
+	app.WebhookSecret = sql.NullString{String: secret, Valid: true}
+	if err := h.appQueries.Update(ctx, app); err != nil {
+		slog.Warn("failed to save webhook secret", "error", err)
+	}
+
+	// Build webhook URL
+	webhookURL := h.cfg.Server.BaseURL + "/webhook/github/" + app.ID
+
+	// Create webhook
+	webhook, created, err := h.githubClient.EnsureWebhook(ctx, owner, repo, webhookURL, secret)
+	if err != nil {
+		slog.Warn("failed to install webhook", "app", app.Name, "error", err)
+		return false
+	}
+
+	if created {
+		slog.Info("webhook installed", "app", app.Name, "webhookID", webhook.ID, "url", webhookURL)
+	} else {
+		slog.Debug("webhook already exists", "app", app.Name, "webhookID", webhook.ID)
+	}
+
+	return true
 }
 
 // normalizeRepoURL normalizes a repository URL for comparison

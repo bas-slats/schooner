@@ -101,7 +101,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, observabilityManager)
 	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager, observabilityManager)
 	logsHandler := handlers.NewLogsHandler(observabilityManager, appQueries)
-	importHandler := handlers.NewImportHandler(githubClient, appQueries)
+	importHandler := handlers.NewImportHandler(cfg, githubClient, appQueries)
 	oauthHandler := handlers.NewOAuthHandler(cfg, settingsQueries, githubClient, sessionStore)
 
 	// Static files (public)
