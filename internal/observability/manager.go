@@ -23,7 +23,7 @@ const (
 	promtailContainer  = "schooner-promtail"
 
 	observabilityNetwork = "schooner-observability"
-	defaultDataDir       = "./data/observability"
+	defaultDataDir       = "/data/observability"
 	defaultGrafanaPort   = 3000
 	defaultLokiRetention = "168h"
 )
