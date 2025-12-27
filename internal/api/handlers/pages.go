@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -1042,6 +1043,16 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 
 	h.writeHeader(w, r, "Build "+build.ID[:8])
 
+	// Prepare duration info
+	var startedAtJS, finishedAtJS string
+	isRunning := build.IsRunning()
+	if build.StartedAt.Valid {
+		startedAtJS = build.StartedAt.Time.Format(time.RFC3339)
+	}
+	if build.FinishedAt.Valid {
+		finishedAtJS = build.FinishedAt.Time.Format(time.RFC3339)
+	}
+
 	fmt.Fprintf(w, `
         <div class="flex items-center mb-6">
             <a href="/apps/%s" class="text-gray-500 hover:text-gray-900 mr-4">&larr; Back</a>
@@ -1064,10 +1075,42 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
             <div id="log-content" class="p-4 h-96 overflow-y-auto font-mono text-sm whitespace-pre-wrap">
                 Loading logs...
             </div>
+            <div id="duration-bar" class="bg-white border-t border-gray-200 px-4 py-3 text-sm font-medium"></div>
         </div>
     <script>
         const logContent = document.getElementById('log-content');
+        const durationBar = document.getElementById('duration-bar');
         const buildID = '%s';
+        const startedAt = '%s';
+        const finishedAt = '%s';
+        let isRunning = %t;
+        let durationInterval;
+
+        function formatDuration(ms) {
+            const seconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds %% 60;
+            if (minutes > 0) {
+                return minutes + ' min, ' + remainingSeconds + ' sec';
+            }
+            return remainingSeconds + ' sec';
+        }
+
+        function updateDuration() {
+            if (!startedAt) {
+                durationBar.innerHTML = '<span class="text-gray-500">Waiting to start...</span>';
+                return;
+            }
+            const start = new Date(startedAt);
+            if (isRunning) {
+                const elapsed = Date.now() - start.getTime();
+                durationBar.innerHTML = '<span class="text-blue-600"><svg class="inline w-4 h-4 mr-1 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>Running for ' + formatDuration(elapsed) + '</span>';
+            } else if (finishedAt) {
+                const end = new Date(finishedAt);
+                const duration = end.getTime() - start.getTime();
+                durationBar.innerHTML = '<span class="text-green-600">Completed in ' + formatDuration(duration) + '</span>';
+            }
+        }
 
         function scrollToBottom() {
             logContent.scrollTop = logContent.scrollHeight;
@@ -1088,10 +1131,17 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 
         eventSource.addEventListener('complete', function(e) {
             const data = JSON.parse(e.data);
-            const line = document.createElement('div');
-            line.className = 'log-line text-purple-600 font-bold mt-4';
-            line.textContent = 'Build ' + data.status;
-            logContent.appendChild(line);
+            isRunning = false;
+            if (durationInterval) clearInterval(durationInterval);
+            // Update duration with final time
+            if (data.started_at && data.finished_at) {
+                const start = new Date(data.started_at);
+                const end = new Date(data.finished_at);
+                const duration = end.getTime() - start.getTime();
+                const statusColor = data.status === 'success' ? 'text-green-600' : 'text-red-600';
+                const statusText = data.status === 'success' ? 'Completed' : 'Failed';
+                durationBar.innerHTML = '<span class="' + statusColor + '">' + statusText + ' in ' + formatDuration(duration) + '</span>';
+            }
             eventSource.close();
         });
 
@@ -1104,6 +1154,12 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // Start duration updates
+        updateDuration();
+        if (isRunning) {
+            durationInterval = setInterval(updateDuration, 1000);
+        }
     </script>`,
 		html.EscapeString(build.AppID),
 		html.EscapeString(build.ID[:8]),
@@ -1111,7 +1167,10 @@ func (h *PageHandler) BuildDetail(w http.ResponseWriter, r *http.Request) {
 		buildStatusBadge(build.Status),
 		html.EscapeString(build.GetShortSHA()),
 		html.EscapeString(string(build.Trigger)),
-		html.EscapeString(build.ID))
+		html.EscapeString(build.ID),
+		startedAtJS,
+		finishedAtJS,
+		isRunning)
 
 	h.writeFooter(w)
 }

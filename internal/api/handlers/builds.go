@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"schooner/internal/database/queries"
+	"schooner/internal/models"
 )
 
 // BuildHandler handles build-related requests
@@ -169,7 +170,7 @@ func (h *BuildHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 
 	// If build is complete, close connection
 	if build.IsComplete() {
-		fmt.Fprintf(w, "event: complete\ndata: {\"status\": \"%s\"}\n\n", build.Status)
+		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", buildCompleteJSON(build))
 		flusher.Flush()
 		return
 	}
@@ -213,10 +214,25 @@ func (h *BuildHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if build.IsComplete() {
-				fmt.Fprintf(w, "event: complete\ndata: {\"status\": \"%s\"}\n\n", build.Status)
+				fmt.Fprintf(w, "event: complete\ndata: %s\n\n", buildCompleteJSON(build))
 				flusher.Flush()
 				return
 			}
 		}
 	}
+}
+
+// buildCompleteJSON returns JSON for the complete event with timestamps
+func buildCompleteJSON(build *models.Build) string {
+	data := map[string]interface{}{
+		"status": build.Status,
+	}
+	if build.StartedAt.Valid {
+		data["started_at"] = build.StartedAt.Time.Format(time.RFC3339)
+	}
+	if build.FinishedAt.Valid {
+		data["finished_at"] = build.FinishedAt.Time.Format(time.RFC3339)
+	}
+	jsonBytes, _ := json.Marshal(data)
+	return string(jsonBytes)
 }
