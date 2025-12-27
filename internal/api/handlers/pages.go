@@ -92,15 +92,38 @@ func (h *PageHandler) writeFooter(w http.ResponseWriter) {
 	fmt.Fprint(w, `
     </main>
     <script>
-        // Handle form submissions
+        // Handle HTMX requests
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             if (evt.detail.successful) {
                 // Refresh page on successful form submission
                 if (evt.detail.elt.tagName === 'FORM') {
                     window.location.reload();
                 }
+                // Handle deploy/start/stop/restart buttons
+                if (evt.detail.elt.tagName === 'BUTTON') {
+                    const action = evt.detail.pathInfo.requestPath;
+                    if (action.includes('/deploy')) {
+                        showToast('Build queued successfully', 'success');
+                        setTimeout(() => window.location.reload(), 1500);
+                    } else if (action.includes('/start') || action.includes('/stop') || action.includes('/restart')) {
+                        showToast('Container action completed', 'success');
+                        setTimeout(() => window.location.reload(), 1000);
+                    }
+                }
+            } else if (evt.detail.failed) {
+                showToast('Action failed: ' + (evt.detail.xhr.responseText || 'Unknown error'), 'error');
             }
         });
+
+        // Toast notification
+        function showToast(message, type) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-4 right-4 px-4 py-2 rounded shadow-lg text-white z-50 ' +
+                (type === 'error' ? 'bg-red-600' : 'bg-green-600');
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
 
         // Confirm delete
         function confirmDelete(appId, appName) {
