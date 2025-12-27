@@ -132,7 +132,7 @@ func GetSession(ctx context.Context) *Session {
 }
 
 // SetSessionCookie sets the session cookie
-func SetSessionCookie(w http.ResponseWriter, sessionID string, maxAge int) {
+func SetSessionCookie(w http.ResponseWriter, sessionID string, maxAge int, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    sessionID,
@@ -140,7 +140,7 @@ func SetSessionCookie(w http.ResponseWriter, sessionID string, maxAge int) {
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false, // Set to true in production with HTTPS
+		Secure:   secure,
 	})
 }
 

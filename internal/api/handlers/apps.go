@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,28 +16,34 @@ import (
 
 	"schooner/internal/build"
 	"schooner/internal/cloudflare"
+	"schooner/internal/config"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
+	"schooner/internal/github"
 	"schooner/internal/models"
 )
 
 // AppHandler handles app-related requests
 type AppHandler struct {
+	cfg           *config.Config
 	appQueries    *queries.AppQueries
 	buildQueries  *queries.BuildQueries
 	dockerClient  *docker.Client
 	tunnelManager *cloudflare.Manager
 	orchestrator  *build.Orchestrator
+	githubClient  *github.Client
 }
 
 // NewAppHandler creates a new AppHandler
-func NewAppHandler(appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager, orchestrator *build.Orchestrator) *AppHandler {
+func NewAppHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQueries *queries.BuildQueries, dockerClient *docker.Client, tunnelManager *cloudflare.Manager, orchestrator *build.Orchestrator, githubClient *github.Client) *AppHandler {
 	return &AppHandler{
+		cfg:           cfg,
 		appQueries:    appQueries,
 		buildQueries:  buildQueries,
 		dockerClient:  dockerClient,
 		tunnelManager: tunnelManager,
 		orchestrator:  orchestrator,
+		githubClient:  githubClient,
 	}
 }
 
@@ -173,11 +183,64 @@ func (h *AppHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.Info("app created", "id", app.ID, "name", app.Name)
+	// Auto-install GitHub webhook if this is a GitHub repo
+	webhookInstalled := false
+	if h.githubClient != nil && h.githubClient.HasToken() && strings.Contains(app.RepoURL, "github.com") {
+		webhookInstalled = h.installWebhook(ctx, app)
+	}
+
+	slog.Info("app created", "id", app.ID, "name", app.Name, "webhookInstalled", webhookInstalled)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(app)
+}
+
+// installWebhook attempts to install a GitHub webhook for the app
+func (h *AppHandler) installWebhook(ctx context.Context, app *models.App) bool {
+	owner, repo, err := github.ParseRepoURL(app.RepoURL)
+	if err != nil {
+		slog.Warn("failed to parse repo URL for webhook", "repoURL", app.RepoURL, "error", err)
+		return false
+	}
+
+	// Generate webhook secret if not set
+	secret := app.GetWebhookSecret()
+	if secret == "" {
+		secret = generateWebhookSecret()
+		app.WebhookSecret = sql.NullString{String: secret, Valid: true}
+		// Update app with the generated secret
+		if err := h.appQueries.Update(ctx, app); err != nil {
+			slog.Warn("failed to save generated webhook secret", "error", err)
+		}
+	}
+
+	// Build webhook URL
+	webhookURL := h.cfg.Server.BaseURL + "/webhook/github/" + app.ID
+
+	// Ensure webhook exists
+	webhook, created, err := h.githubClient.EnsureWebhook(ctx, owner, repo, webhookURL, secret)
+	if err != nil {
+		slog.Warn("failed to install webhook", "app", app.Name, "error", err)
+		return false
+	}
+
+	if created {
+		slog.Info("webhook installed", "app", app.Name, "webhookID", webhook.ID, "url", webhookURL)
+	} else {
+		slog.Debug("webhook already exists", "app", app.Name, "webhookID", webhook.ID)
+	}
+
+	return true
+}
+
+// generateWebhookSecret generates a random webhook secret
+func generateWebhookSecret() string {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)
 }
 
 // Update handles PUT /api/apps/{appID}

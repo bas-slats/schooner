@@ -52,9 +52,12 @@ COPY ui/static /app/ui/static
 # Copy default config
 COPY config/config.example.yaml /app/config/config.yaml
 
-# Create data directories
+# Create data directories (mount /data as a volume for persistence!)
 RUN mkdir -p /data/repos /data/ssh && \
     chown -R homelab-cd:homelab-cd /app /data
+
+# Mark /data as a volume (reminder to mount it)
+VOLUME /data
 
 # Expose port
 EXPOSE 8080

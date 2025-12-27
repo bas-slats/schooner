@@ -153,7 +153,9 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set session cookie (24 hours)
-	auth.SetSessionCookie(w, session.ID, 86400)
+	// Use secure cookies if base URL is HTTPS
+	secure := strings.HasPrefix(h.cfg.Server.BaseURL, "https://")
+	auth.SetSessionCookie(w, session.ID, 86400, secure)
 
 	slog.Info("GitHub OAuth completed", "username", username)
 

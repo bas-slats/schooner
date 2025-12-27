@@ -91,7 +91,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	webhookHandler := handlers.NewWebhookHandler(cfg, appQueries, buildQueries, logQueries)
-	appHandler := handlers.NewAppHandler(appQueries, buildQueries, dockerClient, tunnelManager, orchestrator)
+	appHandler := handlers.NewAppHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, orchestrator, githubClient)
 	buildHandler := handlers.NewBuildHandler(buildQueries, logQueries)
 	pageHandler := handlers.NewPageHandler(cfg, appQueries, buildQueries, dockerClient, tunnelManager, observabilityManager)
 	settingsHandler := handlers.NewSettingsHandler(settingsQueries, githubClient, tunnelManager, observabilityManager)

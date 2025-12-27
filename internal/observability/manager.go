@@ -23,7 +23,7 @@ const (
 	promtailContainer  = "schooner-promtail"
 
 	observabilityNetwork = "schooner-observability"
-	defaultDataDir       = "/data/observability"
+	defaultDataDir       = "./data/observability"
 	defaultGrafanaPort   = 3000
 	defaultLokiRetention = "168h"
 )
@@ -175,6 +175,9 @@ func (m *Manager) startLoki(ctx context.Context, dataDir string) error {
 	_ = m.dockerClient.StopContainer(ctx, lokiContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, lokiContainer)
 
+	// Write loki config to a temp file that Docker can access
+	lokiConfigPath := filepath.Join(dataDir, "loki-config.yaml")
+
 	containerConfig := docker.ContainerConfig{
 		Name:  lokiContainer,
 		Image: lokiImage,
@@ -184,8 +187,8 @@ func (m *Manager) startLoki(ctx context.Context, dataDir string) error {
 			"schooner.service": "loki",
 		},
 		Volumes: map[string]string{
-			filepath.Join(dataDir, "loki"):                "/loki",
-			filepath.Join(dataDir, "loki-config.yaml"):    "/etc/loki/local-config.yaml",
+			"schooner-loki-data": "/loki",
+			lokiConfigPath:       "/etc/loki/local-config.yaml",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -232,7 +235,7 @@ func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
 			"/var/run/docker.sock":                         "/var/run/docker.sock:ro",
 			"/var/lib/docker/containers":                   "/var/lib/docker/containers:ro",
 			filepath.Join(dataDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
-			filepath.Join(dataDir, "promtail"):             "/tmp",
+			"schooner-promtail-data":                       "/tmp",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -272,7 +275,7 @@ func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) er
 			"3000": fmt.Sprintf("%d", port),
 		},
 		Volumes: map[string]string{
-			filepath.Join(dataDir, "grafana"):              "/var/lib/grafana",
+			"schooner-grafana-data":                        "/var/lib/grafana",
 			filepath.Join(dataDir, "grafana-provisioning"): "/etc/grafana/provisioning",
 		},
 		Env: []string{

@@ -13,11 +13,13 @@ server:
 
 database:
   # Path to SQLite database file
-  path: "./data/homelab-cd.db"
+  # Use /data/ for Docker deployments (mount as volume)
+  path: "/data/homelab-cd.db"
 
 git:
   # Directory to store cloned repositories
-  work_dir: "./data/repos"
+  # Use /data/ for Docker deployments (mount as volume)
+  work_dir: "/data/repos"
   # SSH key for private repositories (optional)
   # ssh_key_path: "/path/to/id_rsa"
   # Or use token-based auth for HTTPS URLs
