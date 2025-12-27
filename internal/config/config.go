@@ -17,8 +17,8 @@ func Load() (*Config, error) {
 	// Set defaults
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
-	v.SetDefault("database.path", "./data/homelab-cd.db")
-	v.SetDefault("git.work_dir", "./data/repos")
+	v.SetDefault("database.path", "/data/homelab-cd.db")
+	v.SetDefault("git.work_dir", "/data/repos")
 	v.SetDefault("docker.cleanup_enabled", true)
 	v.SetDefault("docker.keep_image_count", 5)
 	v.SetDefault("docker.build_timeout", "30m")

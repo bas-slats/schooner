@@ -17,13 +17,13 @@ func TestDefault(t *testing.T) {
 	}
 
 	// Test database defaults
-	if cfg.Database.Path != "./data/homelab-cd.db" {
-		t.Errorf("Database.Path = %v, want ./data/homelab-cd.db", cfg.Database.Path)
+	if cfg.Database.Path != "/data/homelab-cd.db" {
+		t.Errorf("Database.Path = %v, want /data/homelab-cd.db", cfg.Database.Path)
 	}
 
 	// Test git defaults
-	if cfg.Git.WorkDir != "./data/repos" {
-		t.Errorf("Git.WorkDir = %v, want ./data/repos", cfg.Git.WorkDir)
+	if cfg.Git.WorkDir != "/data/repos" {
+		t.Errorf("Git.WorkDir = %v, want /data/repos", cfg.Git.WorkDir)
 	}
 
 	// Test docker defaults
