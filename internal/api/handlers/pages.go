@@ -946,7 +946,7 @@ func (h *PageHandler) AppDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	builds, _ := h.buildQueries.ListByAppID(ctx, appID, 20, 0)
+	builds, _ := h.buildQueries.ListByAppID(ctx, appID, 10, 0)
 
 	h.writeHeader(w, r, app.Name)
 
