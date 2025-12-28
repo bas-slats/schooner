@@ -22,7 +22,8 @@ import (
 const (
 	cloudflaredImage     = "cloudflare/cloudflared:latest"
 	cloudflaredContainer = "schooner-cloudflared"
-	defaultConfigDir     = "./data/cloudflared"
+	defaultConfigDir     = "/data/cloudflared"
+	cloudflaredVolume    = "schooner_schooner-data"
 )
 
 // tunnelTokenPayload is the decoded structure of a Cloudflare tunnel token
@@ -40,8 +41,9 @@ type IngressRule struct {
 
 // TunnelConfig represents the cloudflared config.yml structure
 type TunnelConfig struct {
-	Tunnel  string        `yaml:"tunnel"`
-	Ingress []IngressRule `yaml:"ingress"`
+	Tunnel          string        `yaml:"tunnel"`
+	CredentialsFile string        `yaml:"credentials-file"`
+	Ingress         []IngressRule `yaml:"ingress"`
 }
 
 // SettingsGetter interface for getting settings from the database
@@ -116,7 +118,7 @@ func (m *Manager) writeCredentials(payload *tunnelTokenPayload) error {
 	}
 
 	credsPath := filepath.Join(m.configDir, payload.TunnelID+".json")
-	return os.WriteFile(credsPath, data, 0600)
+	return os.WriteFile(credsPath, data, 0644)
 }
 
 // getTunnelConfig loads tunnel configuration from database or config file
@@ -189,12 +191,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}
 
-	// Get absolute path for config directory (needed for Docker mount)
-	absConfigDir, err := filepath.Abs(m.configDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute config path: %w", err)
-	}
-
 	// Load apps and create initial config with routes
 	var apps []*models.App
 	if m.appQueries != nil {
@@ -218,7 +214,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		Cmd: []string{
 			"tunnel",
 			"--no-autoupdate",
-			"--config", "/etc/cloudflared/config.yml",
+			"--config", "/data/cloudflared/config.yml",
 			"run", payload.TunnelID,
 		},
 		Labels: map[string]string{
@@ -226,9 +222,8 @@ func (m *Manager) Start(ctx context.Context) error {
 			"schooner.service": "cloudflared",
 		},
 		RestartPolicy: "unless-stopped",
-		NetworkMode:   "host", // Use host network for easy access to other containers
 		Volumes: map[string]string{
-			absConfigDir: "/etc/cloudflared",
+			cloudflaredVolume: "/data",
 		},
 	}
 
@@ -248,7 +243,12 @@ func (m *Manager) writeConfigForApps(apps []*models.App, tunnelID, domain string
 	// Add schooner's own route first (from base_url config)
 	if m.cfg.Server.BaseURL != "" {
 		if parsed, err := url.Parse(m.cfg.Server.BaseURL); err == nil && parsed.Host != "" {
-			schoonerService := fmt.Sprintf("http://localhost:%d", m.cfg.Server.Port)
+			// Use service_port if set, otherwise fall back to server port
+			port := m.cfg.Cloudflare.ServicePort
+			if port == 0 {
+				port = m.cfg.Server.Port
+			}
+			schoonerService := fmt.Sprintf("http://host.docker.internal:%d", port)
 			rules = append(rules, IngressRule{
 				Hostname: parsed.Host,
 				Service:  schoonerService,
@@ -271,7 +271,7 @@ func (m *Manager) writeConfigForApps(apps []*models.App, tunnelID, domain string
 		}
 
 		hostname := fmt.Sprintf("%s.%s", subdomain, domain)
-		service := fmt.Sprintf("http://localhost:%d", port)
+		service := fmt.Sprintf("http://host.docker.internal:%d", port)
 
 		rules = append(rules, IngressRule{
 			Hostname: hostname,
@@ -388,8 +388,9 @@ func (m *Manager) RemoveRoute(ctx context.Context, app *models.App) error {
 // writeConfigWithTunnelID writes the cloudflared config.yml file with a specific tunnel ID
 func (m *Manager) writeConfigWithTunnelID(rules []IngressRule, tunnelID string) error {
 	cfg := TunnelConfig{
-		Tunnel:  tunnelID,
-		Ingress: rules,
+		Tunnel:          tunnelID,
+		CredentialsFile: fmt.Sprintf("/data/cloudflared/%s.json", tunnelID),
+		Ingress:         rules,
 	}
 
 	data, err := yaml.Marshal(cfg)

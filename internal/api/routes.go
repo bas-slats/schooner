@@ -98,6 +98,15 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 		tunnelManager = cloudflare.NewManager(cfg, dockerClient)
 		tunnelManager.SetSettingsQueries(settingsQueries)
 		tunnelManager.SetAppQueries(appQueries)
+
+		// Auto-start tunnel if configured
+		if tunnelManager.IsConfigured() {
+			go func() {
+				if err := tunnelManager.Start(context.Background()); err != nil {
+					slog.Error("failed to auto-start tunnel", "error", err)
+				}
+			}()
+		}
 	}
 
 	// Initialize observability manager (Loki + Grafana)

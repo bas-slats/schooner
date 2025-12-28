@@ -2,21 +2,21 @@
 # Use this to run Homelab CD itself
 
 services:
-  homelab-cd:
+  schooner:
     build:
       context: .
       args:
         VERSION: ${VERSION:-dev}
-    image: homelab-cd:${VERSION:-latest}
-    container_name: homelab-cd
+    image: schooner:${VERSION:-latest}
+    container_name: schooner
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-7123}:8080"
     volumes:
       # Mount Docker socket for container management
       - /var/run/docker.sock:/var/run/docker.sock
       # Persistent data (database and cloned repos)
-      - homelab-cd-data:/data
+      - schooner-data:/data
       # Custom config file (create from config.example.yaml)
       - ./config.yaml:/app/config/config.yaml:ro
       # SSH keys for private repositories (optional)
@@ -24,7 +24,7 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       # Set your secrets via environment variables
-      - HOMELAB_CD_SECRET=${HOMELAB_CD_SECRET:-change-me-in-production}
+      - SCHOONER_SECRET=${SCHOONER_SECRET:-change-me-in-production}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
@@ -33,10 +33,10 @@ services:
       retries: 3
       start_period: 5s
     labels:
-      - "homelab-cd.managed=false"
+      - "schooner.managed=false"
 
 volumes:
-  homelab-cd-data:
+  schooner-data:
     driver: local
 
 # Example: If you want to use Traefik for reverse proxy

@@ -20,7 +20,7 @@ COPY . .
 # Build binary with version embedded
 ARG VERSION=dev
 RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags="-w -s -X schooner/internal/version.Commit=${VERSION}" \
+    -ldflags="-w -s -X main.version=${VERSION}" \
     -o /homelab-cd \
     ./cmd/schooner
 

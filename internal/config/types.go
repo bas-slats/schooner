@@ -45,7 +45,8 @@ type GitHubOAuthConfig struct {
 type CloudflareConfig struct {
 	TunnelToken string `yaml:"tunnel_token" mapstructure:"tunnel_token"`
 	TunnelID    string `yaml:"tunnel_id" mapstructure:"tunnel_id"`
-	Domain      string `yaml:"domain" mapstructure:"domain"` // e.g., "slats.dev"
+	Domain      string `yaml:"domain" mapstructure:"domain"`           // e.g., "slats.dev"
+	ServicePort int    `yaml:"service_port" mapstructure:"service_port"` // External port for tunnel to reach schooner (defaults to server.port)
 }
 
 // ObservabilityConfig holds Loki/Grafana log aggregation settings
