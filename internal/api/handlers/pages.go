@@ -683,13 +683,6 @@ func (h *PageHandler) renderSystemHealth(w http.ResponseWriter) {
         </script>`)
 }
 
-// containerGroup represents a group of related containers
-type containerGroup struct {
-	Name       string
-	Icon       string
-	Containers []types.Container
-}
-
 func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.Context) {
 	if h.dockerClient == nil {
 		return
@@ -701,49 +694,41 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
 		return
 	}
 
-	// Group containers by type
-	groups := h.groupContainers(containers)
-
 	fmt.Fprint(w, `
-        <h2 class="text-xl font-bold mt-10 mb-4">Docker Containers</h2>
-        <div class="space-y-4" id="container-groups">`)
+        <h2 class="text-xl font-bold mt-10 mb-4">Docker Containers</h2>`)
 
 	if len(containers) == 0 {
 		fmt.Fprint(w, `<div class="bg-white shadow-sm rounded-lg border border-gray-200 p-8 text-center text-gray-500">No containers found</div>`)
 	} else {
-		for _, group := range groups {
-			if len(group.Containers) == 0 {
-				continue
-			}
-			h.renderContainerGroup(w, group)
+		fmt.Fprint(w, `
+        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                        <th class="px-4 py-2 text-left font-medium">Name</th>
+                        <th class="px-4 py-2 text-left font-medium">Image</th>
+                        <th class="px-4 py-2 text-left font-medium">Status</th>
+                        <th class="px-4 py-2 text-left font-medium">CPU</th>
+                        <th class="px-4 py-2 text-left font-medium">Memory</th>
+                        <th class="px-4 py-2 text-left font-medium">Ports</th>
+                    </tr>
+                </thead>
+                <tbody class="text-sm">`)
+		for _, c := range containers {
+			h.renderContainerRow(w, c)
 		}
+		fmt.Fprint(w, `
+                </tbody>
+            </table>
+        </div>`)
 	}
 
 	fmt.Fprint(w, `
-        </div>
         <script>
-            function toggleGroup(groupId) {
-                const content = document.getElementById('group-content-' + groupId);
-                const arrow = document.getElementById('group-arrow-' + groupId);
-                if (content.classList.contains('hidden')) {
-                    content.classList.remove('hidden');
-                    arrow.classList.remove('-rotate-90');
-                } else {
-                    content.classList.add('hidden');
-                    arrow.classList.add('-rotate-90');
-                }
-            }
-            function formatBytes(bytes) {
-                if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
-                if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-                if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
-                return bytes + ' B';
-            }
             function loadContainerStats() {
                 fetch('/api/containers/stats')
                     .then(response => response.json())
                     .then(stats => {
-                        const groupStats = {};
                         stats.forEach(stat => {
                             const cpuCell = document.querySelector('.cpu-stat[data-container="' + stat.name + '"]');
                             const memCell = document.querySelector('.mem-stat[data-container="' + stat.name + '"]');
@@ -753,15 +738,6 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
                                 else if (stat.cpu_percent > 50) cpuCell.className = 'px-4 py-2 text-xs text-yellow-600 cpu-stat';
                                 else cpuCell.className = 'px-4 py-2 text-xs text-gray-600 cpu-stat';
                                 cpuCell.setAttribute('data-container', stat.name);
-                                // Track group stats
-                                const row = cpuCell.closest('tr');
-                                const groupContent = row.closest('[id^="group-content-"]');
-                                if (groupContent) {
-                                    const groupId = groupContent.id.replace('group-content-', '');
-                                    if (!groupStats[groupId]) groupStats[groupId] = { cpu: 0, mem: 0 };
-                                    groupStats[groupId].cpu += stat.cpu_percent;
-                                    groupStats[groupId].mem += stat.memory_usage;
-                                }
                             }
                             if (memCell) {
                                 memCell.textContent = stat.memory_display;
@@ -771,143 +747,12 @@ func (h *PageHandler) renderDockerContainers(w http.ResponseWriter, ctx context.
                                 memCell.setAttribute('data-container', stat.name);
                             }
                         });
-                        // Update group totals
-                        Object.keys(groupStats).forEach(groupId => {
-                            const cpuTotal = document.getElementById('group-cpu-' + groupId);
-                            const memTotal = document.getElementById('group-mem-' + groupId);
-                            if (cpuTotal) cpuTotal.textContent = groupStats[groupId].cpu.toFixed(1) + '%';
-                            if (memTotal) memTotal.textContent = formatBytes(groupStats[groupId].mem);
-                        });
                     })
                     .catch(err => console.error('Failed to load container stats:', err));
             }
             loadContainerStats();
             setInterval(loadContainerStats, 5000);
         </script>`)
-}
-
-// groupContainers groups containers by their schooner labels
-func (h *PageHandler) groupContainers(containers []types.Container) []containerGroup {
-	appContainers := make(map[string][]types.Container) // grouped by app name
-	serviceContainers := []types.Container{}
-	otherContainers := []types.Container{}
-
-	for _, c := range containers {
-		if appName, ok := c.Labels["schooner.app"]; ok {
-			appContainers[appName] = append(appContainers[appName], c)
-		} else if _, ok := c.Labels["schooner.service"]; ok {
-			serviceContainers = append(serviceContainers, c)
-		} else {
-			otherContainers = append(otherContainers, c)
-		}
-	}
-
-	var groups []containerGroup
-
-	// Add app groups
-	for appName, containers := range appContainers {
-		groups = append(groups, containerGroup{
-			Name:       appName,
-			Icon:       "📦",
-			Containers: containers,
-		})
-	}
-
-	// Add schooner services group
-	if len(serviceContainers) > 0 {
-		groups = append(groups, containerGroup{
-			Name:       "Schooner Services",
-			Icon:       "⚙️",
-			Containers: serviceContainers,
-		})
-	}
-
-	// Add other containers group
-	if len(otherContainers) > 0 {
-		groups = append(groups, containerGroup{
-			Name:       "Other Containers",
-			Icon:       "🐳",
-			Containers: otherContainers,
-		})
-	}
-
-	return groups
-}
-
-// renderContainerGroup renders a collapsible group of containers
-func (h *PageHandler) renderContainerGroup(w http.ResponseWriter, group containerGroup) {
-	// Count running containers
-	runningCount := 0
-	for _, c := range group.Containers {
-		if c.State == "running" {
-			runningCount++
-		}
-	}
-
-	// Group status color
-	statusColor := "bg-gray-400"
-	if runningCount == len(group.Containers) {
-		statusColor = "bg-green-500"
-	} else if runningCount > 0 {
-		statusColor = "bg-yellow-500"
-	} else {
-		statusColor = "bg-red-500"
-	}
-
-	groupID := strings.ReplaceAll(group.Name, " ", "-")
-
-	fmt.Fprintf(w, `
-        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-            <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 cursor-pointer flex items-center justify-between hover:bg-gray-100 transition-colors" onclick="toggleGroup('%s')">
-                <div class="flex items-center gap-3">
-                    <svg id="group-arrow-%s" class="w-4 h-4 text-gray-500 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                    </svg>
-                    <span class="w-2 h-2 rounded-full %s"></span>
-                    <span class="text-sm font-medium">%s %s</span>
-                    <span class="text-xs text-gray-500">(%d container%s)</span>
-                </div>
-                <div class="flex items-center gap-4 text-xs text-gray-500">
-                    <span>CPU: <span id="group-cpu-%s" class="font-medium">-</span></span>
-                    <span>Mem: <span id="group-mem-%s" class="font-medium">-</span></span>
-                    <span>%d/%d running</span>
-                </div>
-            </div>
-            <div id="group-content-%s">
-                <table class="w-full">
-                    <thead class="bg-gray-50 text-xs text-gray-500">
-                        <tr>
-                            <th class="px-4 py-2 text-left font-medium">Name</th>
-                            <th class="px-4 py-2 text-left font-medium">Image</th>
-                            <th class="px-4 py-2 text-left font-medium">Status</th>
-                            <th class="px-4 py-2 text-left font-medium">CPU</th>
-                            <th class="px-4 py-2 text-left font-medium">Memory</th>
-                            <th class="px-4 py-2 text-left font-medium">Ports</th>
-                        </tr>
-                    </thead>
-                    <tbody class="text-sm">`,
-		html.EscapeString(groupID),
-		html.EscapeString(groupID),
-		statusColor,
-		group.Icon,
-		html.EscapeString(group.Name),
-		len(group.Containers),
-		pluralize(len(group.Containers)),
-		html.EscapeString(groupID),
-		html.EscapeString(groupID),
-		runningCount,
-		len(group.Containers),
-		html.EscapeString(groupID))
-
-	for _, c := range group.Containers {
-		h.renderContainerRow(w, c)
-	}
-
-	fmt.Fprint(w, `
-                    </tbody>
-                </table>
-            </div>
-        </div>`)
 }
 
 // renderContainerRow renders a single container row
@@ -969,13 +814,6 @@ func (h *PageHandler) renderContainerRow(w http.ResponseWriter, c types.Containe
 		html.EscapeString(name),
 		html.EscapeString(name),
 		html.EscapeString(ports))
-}
-
-func pluralize(count int) string {
-	if count == 1 {
-		return ""
-	}
-	return "s"
 }
 
 func (h *PageHandler) renderAppCard(w http.ResponseWriter, app *models.App, latestBuild *models.Build, containerStatus *docker.ContainerStatus) {
