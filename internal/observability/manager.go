@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -367,7 +368,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*StackStatus, error) {
 	status.GrafanaStatus = grafanaStatus
 
 	if grafanaStatus != nil && grafanaStatus.State == "running" {
-		status.GrafanaURL = fmt.Sprintf("http://localhost:%d", grafanaPort)
+		status.GrafanaURL = fmt.Sprintf("%s:%d", m.getExternalHost(), grafanaPort)
 	}
 
 	return status, nil
@@ -376,7 +377,19 @@ func (m *Manager) GetStatus(ctx context.Context) (*StackStatus, error) {
 // GetGrafanaURL returns the Grafana URL
 func (m *Manager) GetGrafanaURL(ctx context.Context) string {
 	_, grafanaPort, _, _ := m.getConfig(ctx)
-	return fmt.Sprintf("http://localhost:%d", grafanaPort)
+	return fmt.Sprintf("%s:%d", m.getExternalHost(), grafanaPort)
+}
+
+// getExternalHost returns the scheme and hostname from the base URL (without port)
+func (m *Manager) getExternalHost() string {
+	if m.cfg.Server.BaseURL == "" {
+		return "http://localhost"
+	}
+	parsed, err := url.Parse(m.cfg.Server.BaseURL)
+	if err != nil {
+		return "http://localhost"
+	}
+	return fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Hostname())
 }
 
 // GetLokiURL returns the internal Loki URL (for API queries)
