@@ -177,6 +177,59 @@ func (c *Client) GetContainerStatus(ctx context.Context, nameOrID string) (*Cont
 	return status, nil
 }
 
+// GetContainerRunArgs returns the docker run arguments needed to recreate a container
+func (c *Client) GetContainerRunArgs(ctx context.Context, nameOrID string) ([]string, error) {
+	info, err := c.cli.ContainerInspect(ctx, nameOrID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	var args []string
+
+	// Port mappings
+	for containerPort, bindings := range info.HostConfig.PortBindings {
+		for _, binding := range bindings {
+			if binding.HostPort != "" {
+				args = append(args, "-p", fmt.Sprintf("%s:%s", binding.HostPort, containerPort.Port()))
+			}
+		}
+	}
+
+	// Volume mounts
+	for _, mount := range info.Mounts {
+		switch mount.Type {
+		case "bind":
+			args = append(args, "-v", fmt.Sprintf("%s:%s", mount.Source, mount.Destination))
+		case "volume":
+			args = append(args, "-v", fmt.Sprintf("%s:%s", mount.Name, mount.Destination))
+		}
+	}
+
+	// Environment variables
+	for _, env := range info.Config.Env {
+		args = append(args, "-e", env)
+	}
+
+	// Network mode
+	if info.HostConfig.NetworkMode != "" && info.HostConfig.NetworkMode != "default" {
+		args = append(args, "--network", string(info.HostConfig.NetworkMode))
+	}
+
+	// Restart policy
+	if info.HostConfig.RestartPolicy.Name != "" {
+		args = append(args, "--restart", string(info.HostConfig.RestartPolicy.Name))
+	}
+
+	// Labels (preserve existing, skip schooner labels as we'll add our own)
+	for k, v := range info.Config.Labels {
+		if k != "schooner.managed" && k != "schooner.app" && k != "schooner.app-id" {
+			args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+
+	return args, nil
+}
+
 // ListContainers lists all containers with optional filtering
 func (c *Client) ListContainers(ctx context.Context, all bool, filterLabels map[string]string) ([]types.Container, error) {
 	filterArgs := filters.NewArgs()

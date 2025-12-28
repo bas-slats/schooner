@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -647,8 +648,17 @@ func (o *Orchestrator) selfDeployDockerfile(ctx context.Context, app *models.App
 		return fmt.Errorf("could not get current container status: %w", err)
 	}
 
+	// Get container run arguments to recreate with same configuration
+	runArgs, err := o.dockerClient.GetContainerRunArgs(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("could not get container configuration: %w", err)
+	}
+
 	fmt.Fprintf(logWriter, "Current container ID: %s\n", status.ID[:12])
 	fmt.Fprintf(logWriter, "New image: %s\n", newImageTag)
+
+	// Build run args string for the script
+	runArgsStr := strings.Join(runArgs, " ")
 
 	// Build the helper script that will do the swap
 	// The script waits 2 seconds (to let us finish), then stops old and starts new
@@ -659,13 +669,13 @@ func (o *Orchestrator) selfDeployDockerfile(ctx context.Context, app *models.App
 		docker rm %s || true
 		echo "Starting new container with image: %s"
 		docker run -d --name %s \
-			--restart unless-stopped \
 			--label schooner.managed=true \
-			--label schooner.app=%s \
-			--label schooner.app-id=%s \
+			--label "schooner.app=%s" \
+			--label "schooner.app-id=%s" \
+			%s \
 			%s
 		echo "Self-deployment complete"
-	`, containerName, containerName, containerName, newImageTag, containerName, app.Name, app.ID, newImageTag)
+	`, containerName, containerName, containerName, newImageTag, containerName, app.Name, app.ID, runArgsStr, newImageTag)
 
 	// Create and start helper container
 	helperConfig := docker.ContainerConfig{

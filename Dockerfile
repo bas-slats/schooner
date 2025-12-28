@@ -14,11 +14,18 @@ RUN apk add --no-cache git gcc musl-dev
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
+# Copy source code (including .git for version info)
 COPY . .
 
 # Build binary with commit SHA embedded
-RUN COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
+# Try git first, fall back to build arg, then "unknown"
+ARG COMMIT_SHA=""
+RUN if [ -d .git ]; then \
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "${COMMIT_SHA:-unknown}"); \
+    else \
+        COMMIT="${COMMIT_SHA:-unknown}"; \
+    fi && \
+    echo "Building with commit: $COMMIT" && \
     CGO_ENABLED=1 GOOS=linux go build \
     -ldflags="-w -s -X schooner/internal/version.Commit=${COMMIT}" \
     -o /homelab-cd \
