@@ -24,9 +24,14 @@ const (
 	promtailContainer  = "schooner-promtail"
 
 	observabilityNetwork = "schooner-observability"
-	defaultDataDir       = "/data/observability"
+	defaultConfigDir     = "./data/observability"
 	defaultGrafanaPort   = 3000
 	defaultLokiRetention = "168h"
+
+	// Docker named volumes for persistent data
+	lokiVolumeData     = "schooner-loki-data"
+	grafanaVolumeData  = "schooner-grafana-data"
+	promtailVolumeData = "schooner-promtail-data"
 )
 
 // SettingsGetter interface for getting settings from the database
@@ -65,10 +70,10 @@ func (m *Manager) SetSettingsQueries(sq SettingsGetter) {
 }
 
 // getConfig loads observability configuration from database or config file
-func (m *Manager) getConfig(ctx context.Context) (enabled bool, grafanaPort int, lokiRetention, dataDir string) {
+func (m *Manager) getConfig(ctx context.Context) (enabled bool, grafanaPort int, lokiRetention, configDir string) {
 	grafanaPort = defaultGrafanaPort
 	lokiRetention = defaultLokiRetention
-	dataDir = defaultDataDir
+	configDir = defaultConfigDir
 
 	// Try database first
 	if m.settingsQueries != nil {
@@ -81,8 +86,8 @@ func (m *Manager) getConfig(ctx context.Context) (enabled bool, grafanaPort int,
 		if r, err := m.settingsQueries.Get(ctx, "observability_loki_retention"); err == nil && r != "" {
 			lokiRetention = r
 		}
-		if d, err := m.settingsQueries.Get(ctx, "observability_data_dir"); err == nil && d != "" {
-			dataDir = d
+		if d, err := m.settingsQueries.Get(ctx, "observability_config_dir"); err == nil && d != "" {
+			configDir = d
 		}
 	}
 
@@ -93,8 +98,8 @@ func (m *Manager) getConfig(ctx context.Context) (enabled bool, grafanaPort int,
 	if m.cfg.Observability.LokiRetention != "" && lokiRetention == defaultLokiRetention {
 		lokiRetention = m.cfg.Observability.LokiRetention
 	}
-	if m.cfg.Observability.DataDir != "" && dataDir == defaultDataDir {
-		dataDir = m.cfg.Observability.DataDir
+	if m.cfg.Observability.DataDir != "" && configDir == defaultConfigDir {
+		configDir = m.cfg.Observability.DataDir
 	}
 	if m.cfg.Observability.Enabled && !enabled {
 		enabled = m.cfg.Observability.Enabled
@@ -111,7 +116,7 @@ func (m *Manager) IsEnabled(ctx context.Context) bool {
 
 // Start starts the observability stack (Loki, Promtail, Grafana)
 func (m *Manager) Start(ctx context.Context) error {
-	enabled, grafanaPort, lokiRetention, dataDir := m.getConfig(ctx)
+	enabled, grafanaPort, lokiRetention, configDir := m.getConfig(ctx)
 
 	if !enabled {
 		return fmt.Errorf("observability is not enabled")
@@ -122,13 +127,11 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	slog.Info("starting observability stack", "grafana_port", grafanaPort, "retention", lokiRetention)
 
-	// Ensure data directories exist
+	// Ensure config directories exist (data is stored in Docker volumes)
 	dirs := []string{
-		filepath.Join(dataDir, "loki"),
-		filepath.Join(dataDir, "grafana"),
-		filepath.Join(dataDir, "promtail"),
-		filepath.Join(dataDir, "grafana-provisioning", "datasources"),
-		filepath.Join(dataDir, "grafana-provisioning", "dashboards"),
+		configDir,
+		filepath.Join(configDir, "grafana-provisioning", "datasources"),
+		filepath.Join(configDir, "grafana-provisioning", "dashboards"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -142,12 +145,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	// Write configuration files
-	if err := m.writeConfigs(dataDir, lokiRetention); err != nil {
+	if err := m.writeConfigs(configDir, lokiRetention); err != nil {
 		return fmt.Errorf("failed to write configs: %w", err)
 	}
 
 	// Start Loki
-	if err := m.startLoki(ctx, dataDir); err != nil {
+	if err := m.startLoki(ctx, configDir); err != nil {
 		return fmt.Errorf("failed to start Loki: %w", err)
 	}
 
@@ -157,12 +160,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	// Start Promtail
-	if err := m.startPromtail(ctx, dataDir); err != nil {
+	if err := m.startPromtail(ctx, configDir); err != nil {
 		return fmt.Errorf("failed to start Promtail: %w", err)
 	}
 
 	// Start Grafana
-	if err := m.startGrafana(ctx, dataDir, grafanaPort); err != nil {
+	if err := m.startGrafana(ctx, configDir, grafanaPort); err != nil {
 		return fmt.Errorf("failed to start Grafana: %w", err)
 	}
 
@@ -171,17 +174,17 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 // startLoki starts the Loki container
-func (m *Manager) startLoki(ctx context.Context, dataDir string) error {
+func (m *Manager) startLoki(ctx context.Context, configDir string) error {
 	// Stop existing container if any
 	_ = m.dockerClient.StopContainer(ctx, lokiContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, lokiContainer)
 
 	// Convert to absolute path for Docker mount
-	absDataDir, err := filepath.Abs(dataDir)
+	absConfigDir, err := filepath.Abs(configDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
-	lokiConfigPath := filepath.Join(absDataDir, "loki-config.yaml")
+	lokiConfigPath := filepath.Join(absConfigDir, "loki-config.yaml")
 
 	containerConfig := docker.ContainerConfig{
 		Name:  lokiContainer,
@@ -192,8 +195,8 @@ func (m *Manager) startLoki(ctx context.Context, dataDir string) error {
 			"schooner.service": "loki",
 		},
 		Volumes: map[string]string{
-			"schooner-loki-data": "/loki",
-			lokiConfigPath:       "/etc/loki/local-config.yaml",
+			lokiVolumeData: "/loki",
+			lokiConfigPath: "/etc/loki/local-config.yaml",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -223,13 +226,13 @@ func (m *Manager) waitForLoki(ctx context.Context) error {
 }
 
 // startPromtail starts the Promtail container
-func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
+func (m *Manager) startPromtail(ctx context.Context, configDir string) error {
 	// Stop existing container if any
 	_ = m.dockerClient.StopContainer(ctx, promtailContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, promtailContainer)
 
 	// Convert to absolute path for Docker mount
-	absDataDir, err := filepath.Abs(dataDir)
+	absConfigDir, err := filepath.Abs(configDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -243,10 +246,10 @@ func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
 			"schooner.service": "promtail",
 		},
 		Volumes: map[string]string{
-			"/var/run/docker.sock":                            "/var/run/docker.sock:ro",
-			"/var/lib/docker/containers":                      "/var/lib/docker/containers:ro",
-			filepath.Join(absDataDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
-			"schooner-promtail-data":                          "/tmp",
+			"/var/run/docker.sock":                              "/var/run/docker.sock:ro",
+			"/var/lib/docker/containers":                        "/var/lib/docker/containers:ro",
+			filepath.Join(absConfigDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
+			promtailVolumeData:                                  "/tmp",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -262,13 +265,13 @@ func (m *Manager) startPromtail(ctx context.Context, dataDir string) error {
 }
 
 // startGrafana starts the Grafana container
-func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) error {
+func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) error {
 	// Stop existing container if any
 	_ = m.dockerClient.StopContainer(ctx, grafanaContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, grafanaContainer)
 
 	// Convert to absolute path for Docker mount
-	absDataDir, err := filepath.Abs(dataDir)
+	absConfigDir, err := filepath.Abs(configDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -292,8 +295,8 @@ func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) er
 			"3000": fmt.Sprintf("%d", port),
 		},
 		Volumes: map[string]string{
-			"schooner-grafana-data":                           "/var/lib/grafana",
-			filepath.Join(absDataDir, "grafana-provisioning"): "/etc/grafana/provisioning",
+			grafanaVolumeData:                                  "/var/lib/grafana",
+			filepath.Join(absConfigDir, "grafana-provisioning"): "/etc/grafana/provisioning",
 		},
 		Env: []string{
 			"GF_SECURITY_ADMIN_PASSWORD=" + adminPassword,
@@ -399,34 +402,34 @@ func (m *Manager) GetLokiURL() string {
 }
 
 // writeConfigs writes all configuration files
-func (m *Manager) writeConfigs(dataDir, lokiRetention string) error {
+func (m *Manager) writeConfigs(configDir, lokiRetention string) error {
 	// Write Loki config
 	lokiConfig := getLokiConfig(lokiRetention)
-	if err := os.WriteFile(filepath.Join(dataDir, "loki-config.yaml"), []byte(lokiConfig), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "loki-config.yaml"), []byte(lokiConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write Loki config: %w", err)
 	}
 
 	// Write Promtail config
 	promtailConfig := getPromtailConfig()
-	if err := os.WriteFile(filepath.Join(dataDir, "promtail-config.yaml"), []byte(promtailConfig), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "promtail-config.yaml"), []byte(promtailConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write Promtail config: %w", err)
 	}
 
 	// Write Grafana datasource provisioning
 	datasourceConfig := getGrafanaDatasourceConfig()
-	if err := os.WriteFile(filepath.Join(dataDir, "grafana-provisioning", "datasources", "loki.yaml"), []byte(datasourceConfig), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "grafana-provisioning", "datasources", "loki.yaml"), []byte(datasourceConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write Grafana datasource config: %w", err)
 	}
 
 	// Write Grafana dashboard provisioning
 	dashboardProvisionerConfig := getGrafanaDashboardProvisionerConfig()
-	if err := os.WriteFile(filepath.Join(dataDir, "grafana-provisioning", "dashboards", "default.yaml"), []byte(dashboardProvisionerConfig), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "grafana-provisioning", "dashboards", "default.yaml"), []byte(dashboardProvisionerConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write Grafana dashboard provisioner config: %w", err)
 	}
 
 	// Write Schooner dashboard
 	schoonerDashboard := getSchoonerDashboard()
-	if err := os.WriteFile(filepath.Join(dataDir, "grafana-provisioning", "dashboards", "schooner.json"), []byte(schoonerDashboard), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "grafana-provisioning", "dashboards", "schooner.json"), []byte(schoonerDashboard), 0644); err != nil {
 		return fmt.Errorf("failed to write Schooner dashboard: %w", err)
 	}
 
