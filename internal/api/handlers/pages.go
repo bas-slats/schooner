@@ -79,20 +79,25 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title 
                 <img src="/static/img/logo.svg" alt="Schooner" class="h-8 w-8">
                 <span class="text-xl font-bold gradient-text">Schooner</span>
             </a>
-            <div class="flex items-center space-x-4">
-                <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
-                <a href="/settings" class="text-gray-600 hover:text-gray-900">Settings</a>
-                <span class="text-gray-400">|</span>
-                <div class="flex items-center space-x-2">
-                    <img src="%s" alt="%s" class="h-6 w-6 rounded-full">
-                    <span class="text-gray-600 text-sm">%s</span>
+            <div class="flex items-center space-x-6">
+                <a href="/" class="text-gray-600 hover:text-gray-900 text-sm font-medium">Dashboard</a>
+                <a href="/settings" class="text-gray-600 hover:text-gray-900 text-sm font-medium">Settings</a>
+                <div class="flex items-center space-x-3 pl-6 border-l border-gray-200">
+                    <a href="https://github.com/%s" target="_blank" class="flex items-center space-x-2 group">
+                        <img src="%s" alt="%s" class="h-8 w-8 rounded-full ring-2 ring-gray-100 group-hover:ring-gray-200 transition-all">
+                        <span class="text-gray-700 text-sm font-medium group-hover:text-gray-900">%s</span>
+                    </a>
+                    <a href="/logout" class="text-gray-400 hover:text-gray-600 transition-colors" title="Logout">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                        </svg>
+                    </a>
                 </div>
-                <a href="/logout" class="text-gray-500 hover:text-gray-700 text-sm">Logout</a>
             </div>
         </div>
     </nav>
     <main class="max-w-7xl mx-auto px-6 py-8">
-`, html.EscapeString(title), html.EscapeString(avatarURL), html.EscapeString(username), html.EscapeString(username))
+`, html.EscapeString(title), html.EscapeString(username), html.EscapeString(avatarURL), html.EscapeString(username), html.EscapeString(username))
 }
 
 func (h *PageHandler) writeFooter(w http.ResponseWriter) {

@@ -29,10 +29,11 @@ func NewMiddleware(store *SessionStore, loginURL string) *Middleware {
 		store:    store,
 		loginURL: loginURL,
 		publicPaths: map[string]bool{
-			"/health":               true,
-			"/oauth/github/login":   true,
+			"/health":                true,
+			"/logout":                true,
+			"/oauth/github/login":    true,
 			"/oauth/github/callback": true,
-			"/oauth/github/status":  true,
+			"/oauth/github/status":   true,
 		},
 		publicPrefix: []string{
 			"/webhook/",
@@ -67,6 +68,7 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 				Path:     "/",
 				MaxAge:   -1,
 				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
 			})
 			m.redirectToLogin(w, r)
 			return
@@ -152,5 +154,6 @@ func ClearSessionCookie(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
