@@ -66,15 +66,15 @@ type ContainerConfig struct {
 
 // ContainerStatus holds container status information
 type ContainerStatus struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	State      string            `json:"state"`
-	Status     string            `json:"status"`
-	Health     string            `json:"health,omitempty"`
-	StartedAt  string            `json:"started_at,omitempty"`
-	Ports      map[string]string `json:"ports,omitempty"`
-	Image      string            `json:"image"`
-	CreatedAt  string            `json:"created_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	State     string            `json:"state"`
+	Status    string            `json:"status"`
+	Health    string            `json:"health,omitempty"`
+	StartedAt string            `json:"started_at,omitempty"`
+	Ports     map[string]string `json:"ports,omitempty"`
+	Image     string            `json:"image"`
+	CreatedAt string            `json:"created_at"`
 }
 
 // RunContainer creates and starts a container
@@ -149,16 +149,44 @@ func (c *Client) StopAndRemove(ctx context.Context, nameOrID string) error {
 	return nil
 }
 
-// GetContainerStatus retrieves status of a container
+// GetContainerStatus retrieves status of a container by name/ID, falling back to label lookup
 func (c *Client) GetContainerStatus(ctx context.Context, nameOrID string) (*ContainerStatus, error) {
 	info, err := c.cli.ContainerInspect(ctx, nameOrID)
 	if err != nil {
 		if client.IsErrNotFound(err) {
-			return &ContainerStatus{Name: nameOrID, State: "not_found"}, nil
+			// Try finding by schooner.app label (for docker-compose apps)
+			return c.getContainerStatusByLabel(ctx, nameOrID)
 		}
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
+	return c.containerInfoToStatus(info), nil
+}
+
+// getContainerStatusByLabel finds a container by the schooner.app label
+func (c *Client) getContainerStatusByLabel(ctx context.Context, appName string) (*ContainerStatus, error) {
+	containers, err := c.cli.ContainerList(ctx, container.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", "schooner.app="+appName)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	if len(containers) == 0 {
+		return &ContainerStatus{Name: appName, State: "not_found"}, nil
+	}
+
+	// Get the first matching container (there should typically be only one)
+	info, err := c.cli.ContainerInspect(ctx, containers[0].ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	return c.containerInfoToStatus(info), nil
+}
+
+// containerInfoToStatus converts container inspect info to ContainerStatus
+func (c *Client) containerInfoToStatus(info types.ContainerJSON) *ContainerStatus {
 	status := &ContainerStatus{
 		ID:        info.ID,
 		Name:      info.Name,
@@ -174,7 +202,7 @@ func (c *Client) GetContainerStatus(ctx context.Context, nameOrID string) (*Cont
 		status.Health = info.State.Health.Status
 	}
 
-	return status, nil
+	return status
 }
 
 // GetContainerRunArgs returns the docker run arguments needed to recreate a container

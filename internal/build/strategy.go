@@ -26,6 +26,7 @@ type Strategy interface {
 type BuildOptions struct {
 	AppID        string
 	AppName      string
+	BuildID      string
 	RepoPath     string
 	ImageName    string
 	Tag          string
@@ -39,9 +40,9 @@ type BuildOptions struct {
 
 // BuildResult contains the result of a build
 type BuildResult struct {
-	ImageID   string
-	ImageTag  string
-	Size      int64
+	ImageID  string
+	ImageTag string
+	Size     int64
 }
 
 // SafePath validates that a user-supplied path doesn't escape the base directory.

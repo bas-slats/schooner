@@ -139,7 +139,7 @@ providers:
     disableDeletion: false
     updateIntervalSeconds: 30
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /schooner-data/observability/grafana-provisioning/dashboards
 `
 }
 

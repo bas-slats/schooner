@@ -255,6 +255,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 	buildOpts := BuildOptions{
 		AppID:        app.ID,
 		AppName:      app.Name,
+		BuildID:      build.ID,
 		RepoPath:     repoPath,
 		ImageName:    app.GetImageName(),
 		Tag:          build.ID[:8],

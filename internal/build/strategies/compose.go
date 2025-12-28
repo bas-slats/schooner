@@ -9,10 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"schooner/internal/build"
 	"schooner/internal/docker"
 	"schooner/internal/models"
 )
+
+const schoonerOverrideFile = ".schooner.compose.override.yml"
 
 // ComposeStrategy builds using Docker Compose
 type ComposeStrategy struct {
@@ -165,6 +169,14 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 		fmt.Fprintf(opts.LogWriter, "Starting services with Docker Compose\n")
 	}
 
+	// Generate override file with schooner labels
+	overridePath, err := generateLabelOverride(composePath, opts)
+	if err != nil {
+		fmt.Fprintf(opts.LogWriter, "Warning: failed to generate label override: %v\n", err)
+	} else {
+		fmt.Fprintf(opts.LogWriter, "Generated label override file for container tracking\n")
+	}
+
 	// Write .env file with app's environment variables
 	if len(opts.EnvVars) > 0 {
 		envFilePath := filepath.Join(opts.RepoPath, ".env")
@@ -181,8 +193,12 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Build command args
-	args := []string{"compose", "-f", composePath, "up", "-d", "--force-recreate", "--remove-orphans"}
+	// Build command args with both compose files
+	args := []string{"compose", "-f", composePath}
+	if overridePath != "" {
+		args = append(args, "-f", overridePath)
+	}
+	args = append(args, "up", "-d", "--force-recreate", "--remove-orphans")
 	if !selfDeploy {
 		args = append(args, "--wait")
 	}
@@ -193,13 +209,19 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 		// docker compose, ensuring the command completes even if we're killed.
 		fmt.Fprintf(opts.LogWriter, "Starting self-deploy via helper container...\n")
 
-		// Build the helper script
+		// Build the helper script with override file
+		composeCmd := fmt.Sprintf("docker compose -f %s", composePath)
+		if overridePath != "" {
+			composeCmd += fmt.Sprintf(" -f %s", overridePath)
+		}
+		composeCmd += " up -d --force-recreate --remove-orphans"
+
 		script := fmt.Sprintf(`
 			cd %s
 			sleep 3
-			docker compose -f %s up -d --force-recreate --remove-orphans
+			%s
 			echo "Self-deploy complete"
-		`, opts.RepoPath, composePath)
+		`, opts.RepoPath, composeCmd)
 
 		// Run helper container with docker socket mounted
 		helperCmd := exec.Command("docker", "run", "-d", "--rm",
@@ -273,6 +295,60 @@ func writeEnvFile(path string, envVars map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// generateLabelOverride creates an override file that adds schooner labels to all services
+func generateLabelOverride(composePath string, opts build.BuildOptions) (string, error) {
+	// Read the original compose file
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read compose file: %w", err)
+	}
+
+	// Parse to extract service names
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return "", fmt.Errorf("failed to parse compose file: %w", err)
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("no services found in compose file")
+	}
+
+	// Build override structure with labels for each service
+	labels := map[string]string{
+		"schooner.managed": "true",
+		"schooner.app":     opts.AppName,
+		"schooner.app-id":  opts.AppID,
+	}
+	if opts.BuildID != "" {
+		labels["schooner.build-id"] = opts.BuildID
+	}
+
+	overrideServices := make(map[string]interface{})
+	for serviceName := range services {
+		overrideServices[serviceName] = map[string]interface{}{
+			"labels": labels,
+		}
+	}
+
+	override := map[string]interface{}{
+		"services": overrideServices,
+	}
+
+	// Write override file
+	overrideData, err := yaml.Marshal(override)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal override: %w", err)
+	}
+
+	overridePath := filepath.Join(filepath.Dir(composePath), schoonerOverrideFile)
+	if err := os.WriteFile(overridePath, overrideData, 0644); err != nil {
+		return "", fmt.Errorf("failed to write override file: %w", err)
+	}
+
+	return overridePath, nil
 }
 
 // Down stops the compose services

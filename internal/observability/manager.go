@@ -15,13 +15,13 @@ import (
 )
 
 const (
-	lokiImage       = "grafana/loki:2.9.0"
-	grafanaImage    = "grafana/grafana:10.2.0"
-	promtailImage   = "grafana/promtail:2.9.0"
+	lokiImage     = "grafana/loki:2.9.0"
+	grafanaImage  = "grafana/grafana:10.2.0"
+	promtailImage = "grafana/promtail:2.9.0"
 
-	lokiContainer      = "schooner-loki"
-	grafanaContainer   = "schooner-grafana"
-	promtailContainer  = "schooner-promtail"
+	lokiContainer     = "schooner-loki"
+	grafanaContainer  = "schooner-grafana"
+	promtailContainer = "schooner-promtail"
 
 	observabilityNetwork = "schooner-observability"
 	defaultConfigDir     = "./data/observability"
@@ -32,6 +32,7 @@ const (
 	lokiVolumeData     = "schooner-loki-data"
 	grafanaVolumeData  = "schooner-grafana-data"
 	promtailVolumeData = "schooner-promtail-data"
+	schoonerDataVolume = "schooner_schooner-data"
 )
 
 // SettingsGetter interface for getting settings from the database
@@ -41,11 +42,11 @@ type SettingsGetter interface {
 
 // StackStatus represents the status of the observability stack
 type StackStatus struct {
-	Enabled       bool                   `json:"enabled"`
-	LokiStatus    *docker.ContainerStatus `json:"loki_status,omitempty"`
+	Enabled        bool                    `json:"enabled"`
+	LokiStatus     *docker.ContainerStatus `json:"loki_status,omitempty"`
 	PromtailStatus *docker.ContainerStatus `json:"promtail_status,omitempty"`
-	GrafanaStatus *docker.ContainerStatus `json:"grafana_status,omitempty"`
-	GrafanaURL    string                  `json:"grafana_url,omitempty"`
+	GrafanaStatus  *docker.ContainerStatus `json:"grafana_status,omitempty"`
+	GrafanaURL     string                  `json:"grafana_url,omitempty"`
 }
 
 // Manager manages the observability stack (Loki, Promtail, Grafana)
@@ -179,24 +180,19 @@ func (m *Manager) startLoki(ctx context.Context, configDir string) error {
 	_ = m.dockerClient.StopContainer(ctx, lokiContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, lokiContainer)
 
-	// Convert to absolute path for Docker mount
-	absConfigDir, err := filepath.Abs(configDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
-	}
-	lokiConfigPath := filepath.Join(absConfigDir, "loki-config.yaml")
-
+	// Use the schooner-data volume for config files
+	// Config is written to /data/observability/loki-config.yaml inside the volume
 	containerConfig := docker.ContainerConfig{
 		Name:  lokiContainer,
 		Image: lokiImage,
-		Cmd:   []string{"-config.file=/etc/loki/local-config.yaml"},
+		Cmd:   []string{"-config.file=/schooner-data/observability/loki-config.yaml"},
 		Labels: map[string]string{
 			"schooner.managed": "true",
 			"schooner.service": "loki",
 		},
 		Volumes: map[string]string{
-			lokiVolumeData: "/loki",
-			lokiConfigPath: "/etc/loki/local-config.yaml",
+			lokiVolumeData:     "/loki",
+			schoonerDataVolume: "/schooner-data",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -231,25 +227,20 @@ func (m *Manager) startPromtail(ctx context.Context, configDir string) error {
 	_ = m.dockerClient.StopContainer(ctx, promtailContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, promtailContainer)
 
-	// Convert to absolute path for Docker mount
-	absConfigDir, err := filepath.Abs(configDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
-	}
-
+	// Use the schooner-data volume for config files
 	containerConfig := docker.ContainerConfig{
 		Name:  promtailContainer,
 		Image: promtailImage,
-		Cmd:   []string{"-config.file=/etc/promtail/config.yml"},
+		Cmd:   []string{"-config.file=/schooner-data/observability/promtail-config.yaml"},
 		Labels: map[string]string{
 			"schooner.managed": "true",
 			"schooner.service": "promtail",
 		},
 		Volumes: map[string]string{
-			"/var/run/docker.sock":                              "/var/run/docker.sock:ro",
-			"/var/lib/docker/containers":                        "/var/lib/docker/containers:ro",
-			filepath.Join(absConfigDir, "promtail-config.yaml"): "/etc/promtail/config.yml",
-			promtailVolumeData:                                  "/tmp",
+			"/var/run/docker.sock":       "/var/run/docker.sock:ro",
+			"/var/lib/docker/containers": "/var/lib/docker/containers:ro",
+			schoonerDataVolume:           "/schooner-data",
+			promtailVolumeData:           "/tmp",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
@@ -270,12 +261,6 @@ func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) 
 	_ = m.dockerClient.StopContainer(ctx, grafanaContainer, 10)
 	_ = m.dockerClient.RemoveContainer(ctx, grafanaContainer)
 
-	// Convert to absolute path for Docker mount
-	absConfigDir, err := filepath.Abs(configDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
-	}
-
 	// Get or generate admin password
 	adminPassword := "admin" // Default, should be changed
 	if m.settingsQueries != nil {
@@ -284,6 +269,7 @@ func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) 
 		}
 	}
 
+	// Use the schooner-data volume for config files
 	containerConfig := docker.ContainerConfig{
 		Name:  grafanaContainer,
 		Image: grafanaImage,
@@ -295,8 +281,8 @@ func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) 
 			"3000": fmt.Sprintf("%d", port),
 		},
 		Volumes: map[string]string{
-			grafanaVolumeData:                                  "/var/lib/grafana",
-			filepath.Join(absConfigDir, "grafana-provisioning"): "/etc/grafana/provisioning",
+			grafanaVolumeData:  "/var/lib/grafana",
+			schoonerDataVolume: "/schooner-data",
 		},
 		Env: []string{
 			"GF_SECURITY_ADMIN_PASSWORD=" + adminPassword,
@@ -304,6 +290,7 @@ func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) 
 			"GF_AUTH_ANONYMOUS_ORG_ROLE=Admin",
 			"GF_USERS_ALLOW_SIGN_UP=false",
 			"GF_AUTH_DISABLE_LOGIN_FORM=true",
+			"GF_PATHS_PROVISIONING=/schooner-data/observability/grafana-provisioning",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
