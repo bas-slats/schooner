@@ -1695,9 +1695,9 @@ func (h *PageHandler) renderAddAppForm(w http.ResponseWriter) {
                         <div>
                             <label class="block text-sm text-gray-500 mb-1">Build Strategy</label>
                             <select name="build_strategy" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                <option value="autodetect">Autodetect</option>
                                 <option value="dockerfile">Dockerfile</option>
                                 <option value="compose">Docker Compose</option>
-                                <option value="buildpacks">Buildpacks</option>
                             </select>
                         </div>
                         <div>
@@ -1804,9 +1804,9 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
                                 <div>
                                     <label class="block text-sm text-gray-500 mb-1">Build Strategy</label>
                                     <select name="build_strategy" class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                                        <option value="autodetect" %s>Autodetect</option>
                                         <option value="dockerfile" %s>Dockerfile</option>
                                         <option value="compose" %s>Docker Compose</option>
-                                        <option value="buildpacks" %s>Buildpacks</option>
                                     </select>
                                 </div>
                                 <div>
@@ -1885,9 +1885,9 @@ func (h *PageHandler) renderAppSettings(w http.ResponseWriter, app *models.App) 
 		html.EscapeString(app.GetDescription()),
 		html.EscapeString(app.RepoURL),
 		html.EscapeString(app.Branch),
+		selected(app.BuildStrategy == models.BuildStrategyAutodetect),
 		selected(app.BuildStrategy == models.BuildStrategyDockerfile),
 		selected(app.BuildStrategy == models.BuildStrategyCompose),
-		selected(app.BuildStrategy == models.BuildStrategyBuildpacks),
 		html.EscapeString(app.GetWebhookSecret()),
 		html.EscapeString(app.DockerfilePath),
 		html.EscapeString(app.BuildContext),

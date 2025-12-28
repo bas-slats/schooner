@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -195,17 +197,34 @@ func (o *Orchestrator) processBuild(buildID string) {
 		fmt.Fprintf(logWriter, "Message: %s\n", commit.Message)
 	}
 
+	// Determine build strategy (autodetect if needed)
+	buildStrategy := app.BuildStrategy
+	repoPath := o.gitClient.RepoPath(app.RepoURL)
+
+	if buildStrategy == models.BuildStrategyAutodetect {
+		detected, composeFile := o.detectBuildStrategy(repoPath)
+		buildStrategy = detected
+
+		if composeFile != "" {
+			app.ComposeFile = composeFile
+		}
+
+		fmt.Fprintf(logWriter, "\nAutodetected build strategy: %s\n", buildStrategy)
+		if composeFile != "" {
+			fmt.Fprintf(logWriter, "Compose file: %s\n", composeFile)
+		}
+	}
+
 	// Get build strategy
-	strategy, ok := o.strategies[app.BuildStrategy]
+	strategy, ok := o.strategies[buildStrategy]
 	if !ok {
-		logger.Error("unknown build strategy", "strategy", app.BuildStrategy)
-		fmt.Fprintf(logWriter, "\nERROR: Unknown build strategy: %s\n", app.BuildStrategy)
-		o.failBuild(ctx, build, fmt.Sprintf("unknown build strategy: %s", app.BuildStrategy))
+		logger.Error("unknown build strategy", "strategy", buildStrategy)
+		fmt.Fprintf(logWriter, "\nERROR: Unknown build strategy: %s\n", buildStrategy)
+		o.failBuild(ctx, build, fmt.Sprintf("unknown build strategy: %s", buildStrategy))
 		return
 	}
 
 	// Prepare build options
-	repoPath := o.gitClient.RepoPath(app.RepoURL)
 	buildOpts := BuildOptions{
 		AppID:        app.ID,
 		AppName:      app.Name,
@@ -250,7 +269,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 	fmt.Fprintf(logWriter, "\n--- Deploying ---\n\n")
 
 	// Deploy based on strategy
-	if app.BuildStrategy == models.BuildStrategyCompose {
+	if buildStrategy == models.BuildStrategyCompose {
 		// For compose, run docker compose up
 		composeStrategy := strategy.(composeStrategyWrapper)
 		if err := composeStrategy.Up(ctx, buildOpts); err != nil {
@@ -411,6 +430,35 @@ func (w *buildLogWriter) Flush() {
 		w.logQueries.Append(context.Background(), log)
 		w.buffer = nil
 	}
+}
+
+// detectBuildStrategy examines the repo to determine the best build strategy.
+// Returns the detected strategy and the compose file path (if compose is detected).
+func (o *Orchestrator) detectBuildStrategy(repoPath string) (models.BuildStrategy, string) {
+	// Check for docker-compose files first (higher priority)
+	composeFiles := []string{
+		"docker-compose.yml",
+		"docker-compose.yaml",
+		"compose.yml",
+		"compose.yaml",
+	}
+
+	for _, f := range composeFiles {
+		path := filepath.Join(repoPath, f)
+		if _, err := os.Stat(path); err == nil {
+			return models.BuildStrategyCompose, f
+		}
+	}
+
+	// Check for Dockerfile
+	dockerfilePath := filepath.Join(repoPath, "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); err == nil {
+		return models.BuildStrategyDockerfile, ""
+	}
+
+	// Default to Dockerfile strategy even if not found
+	// (validation will catch the missing file)
+	return models.BuildStrategyDockerfile, ""
 }
 
 // envMapToSlice converts a map to KEY=VALUE slice

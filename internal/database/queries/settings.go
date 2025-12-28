@@ -129,7 +129,17 @@ func (q *SettingsQueries) SetMultiple(ctx context.Context, settings map[string]s
 
 	now := time.Now()
 	for key, value := range settings {
-		_, err := q.db.ExecContext(ctx, query, key, value, now)
+		// Encrypt sensitive values
+		storeValue := value
+		if crypto.IsSensitiveKey(key) && q.encryptor != nil && value != "" {
+			encrypted, err := q.encryptor.Encrypt(value)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt value for %s: %w", key, err)
+			}
+			storeValue = encrypted
+		}
+
+		_, err := q.db.ExecContext(ctx, query, key, storeValue, now)
 		if err != nil {
 			return fmt.Errorf("failed to set setting %s: %w", key, err)
 		}

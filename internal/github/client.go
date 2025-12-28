@@ -33,6 +33,13 @@ type Repository struct {
 	PushedAt      time.Time `json:"pushed_at"`
 }
 
+// GitHubUser represents user data from GitHub API
+type GitHubUser struct {
+	ID        int64  `json:"id"`
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+}
+
 // NewClient creates a new GitHub client
 func NewClient(token string) *Client {
 	return &Client{
@@ -175,6 +182,40 @@ func (c *Client) GetUser(ctx context.Context) (string, error) {
 	}
 
 	return user.Login, nil
+}
+
+// GetUserFull fetches the authenticated user's full info including ID
+func (c *Client) GetUserFull(ctx context.Context) (*GitHubUser, error) {
+	if c.token == "" {
+		return nil, fmt.Errorf("GitHub token not configured")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var user GitHubUser
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &user, nil
 }
 
 // CheckRepoHasDockerfile checks if a repo has a Dockerfile

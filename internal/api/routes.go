@@ -34,6 +34,7 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(middleware.Compress(5))
+	r.Use(securityHeaders)
 
 	// Initialize queries
 	appQueries := queries.NewAppQueries(db.DB)
@@ -215,4 +216,22 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 	})
 
 	return r
+}
+
+// securityHeaders adds security-related HTTP headers to all responses
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prevent MIME type sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Prevent clickjacking
+		w.Header().Set("X-Frame-Options", "DENY")
+		// Enable XSS filter in browsers
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		// Prevent caching of sensitive data
+		w.Header().Set("Cache-Control", "no-store")
+		// Referrer policy
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		next.ServeHTTP(w, r)
+	})
 }

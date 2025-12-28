@@ -37,9 +37,8 @@ type GitConfig struct {
 
 // GitHubOAuthConfig holds GitHub OAuth settings
 type GitHubOAuthConfig struct {
-	ClientID     string   `yaml:"client_id" mapstructure:"client_id"`
-	ClientSecret string   `yaml:"client_secret" mapstructure:"client_secret"`
-	AllowedUsers []string `yaml:"allowed_users" mapstructure:"allowed_users"`
+	ClientID     string `yaml:"client_id" mapstructure:"client_id"`
+	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
 }
 
 // CloudflareConfig holds Cloudflare Tunnel settings

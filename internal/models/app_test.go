@@ -274,8 +274,8 @@ func TestBuildStrategy(t *testing.T) {
 	if BuildStrategyCompose != "compose" {
 		t.Errorf("BuildStrategyCompose = %v, want compose", BuildStrategyCompose)
 	}
-	if BuildStrategyBuildpacks != "buildpacks" {
-		t.Errorf("BuildStrategyBuildpacks = %v, want buildpacks", BuildStrategyBuildpacks)
+	if BuildStrategyAutodetect != "autodetect" {
+		t.Errorf("BuildStrategyAutodetect = %v, want autodetect", BuildStrategyAutodetect)
 	}
 }
 

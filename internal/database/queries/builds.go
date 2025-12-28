@@ -216,3 +216,4 @@ func (q *BuildQueries) GetRunningBuilds(ctx context.Context) ([]*models.Build, e
 
 	return builds, nil
 }
+

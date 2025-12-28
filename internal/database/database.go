@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS apps (
     repo_url TEXT NOT NULL,
     branch TEXT NOT NULL DEFAULT 'main',
     webhook_secret TEXT,
-    build_strategy TEXT NOT NULL CHECK(build_strategy IN ('dockerfile', 'compose', 'buildpacks')),
+    build_strategy TEXT NOT NULL CHECK(build_strategy IN ('dockerfile', 'compose', 'autodetect')),
     dockerfile_path TEXT DEFAULT 'Dockerfile',
     compose_file TEXT DEFAULT 'docker-compose.yaml',
     build_context TEXT DEFAULT '.',

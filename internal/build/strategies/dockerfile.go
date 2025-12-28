@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/archive"
@@ -36,7 +35,18 @@ func (s *DockerfileStrategy) Name() models.BuildStrategy {
 
 // Validate checks if the strategy can be used
 func (s *DockerfileStrategy) Validate(ctx context.Context, opts build.BuildOptions) error {
-	dockerfilePath := filepath.Join(opts.RepoPath, opts.BuildContext, opts.Dockerfile)
+	// Validate build context path
+	contextPath, err := build.SafePath(opts.RepoPath, opts.BuildContext)
+	if err != nil {
+		return fmt.Errorf("invalid build context: %w", err)
+	}
+
+	// Validate Dockerfile path within build context
+	dockerfilePath, err := build.SafePath(contextPath, opts.Dockerfile)
+	if err != nil {
+		return fmt.Errorf("invalid Dockerfile path: %w", err)
+	}
+
 	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
 		return fmt.Errorf("Dockerfile not found: %s", dockerfilePath)
 	}
@@ -45,8 +55,11 @@ func (s *DockerfileStrategy) Validate(ctx context.Context, opts build.BuildOptio
 
 // Build executes the build
 func (s *DockerfileStrategy) Build(ctx context.Context, opts build.BuildOptions) (*build.BuildResult, error) {
-	// Determine build context path
-	contextPath := filepath.Join(opts.RepoPath, opts.BuildContext)
+	// Determine build context path (already validated in Validate, but re-check for safety)
+	contextPath, err := build.SafePath(opts.RepoPath, opts.BuildContext)
+	if err != nil {
+		return nil, fmt.Errorf("invalid build context: %w", err)
+	}
 
 	// Create tar archive of build context
 	fmt.Fprintf(opts.LogWriter, "Creating build context from %s\n", contextPath)

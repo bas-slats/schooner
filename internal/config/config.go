@@ -131,7 +131,7 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("app[%d] %q: repo_url is required", i, app.Name)
 		}
 		switch app.BuildStrategy {
-		case "dockerfile", "compose", "buildpacks":
+		case "dockerfile", "compose", "autodetect":
 			// valid
 		default:
 			return fmt.Errorf("app[%d] %q: invalid build_strategy %q", i, app.Name, app.BuildStrategy)

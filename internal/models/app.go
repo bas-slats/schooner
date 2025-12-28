@@ -57,7 +57,7 @@ type BuildStrategy string
 const (
 	BuildStrategyDockerfile BuildStrategy = "dockerfile"
 	BuildStrategyCompose    BuildStrategy = "compose"
-	BuildStrategyBuildpacks BuildStrategy = "buildpacks"
+	BuildStrategyAutodetect BuildStrategy = "autodetect"
 )
 
 // App represents an application configured for deployment

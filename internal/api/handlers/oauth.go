@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"schooner/internal/auth"
@@ -133,29 +134,50 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Validate the token by getting the user
 	h.githubClient.SetToken(tokenResp.AccessToken)
-	username, err := h.githubClient.GetUser(ctx)
+	user, err := h.githubClient.GetUserFull(ctx)
 	if err != nil {
 		slog.Error("failed to get GitHub user", "error", err)
 		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to verify GitHub token"), http.StatusTemporaryRedirect)
 		return
 	}
 
-	// Check if user is allowed (if allowed_users is configured)
-	if len(h.cfg.GitHubOAuth.AllowedUsers) > 0 {
-		allowed := false
-		for _, u := range h.cfg.GitHubOAuth.AllowedUsers {
-			if strings.EqualFold(u, username) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			slog.Warn("unauthorized login attempt", "username", username)
-			h.githubClient.SetToken("") // Clear the token
-			http.Redirect(w, r, "/oauth/github/login?error="+url.QueryEscape("User not authorized"), http.StatusTemporaryRedirect)
+	// First user wins: check if an owner is already registered
+	ownerGitHubID, err := h.settingsQueries.Get(ctx, "owner_github_id")
+	if err != nil {
+		slog.Error("failed to check owner", "error", err)
+		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to verify ownership"), http.StatusTemporaryRedirect)
+		return
+	}
+
+	if ownerGitHubID == "" {
+		// First user wins - register as owner
+		if err := h.settingsQueries.Set(ctx, "owner_github_id", strconv.FormatInt(user.ID, 10)); err != nil {
+			slog.Error("failed to set owner GitHub ID", "error", err)
+			http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to register owner"), http.StatusTemporaryRedirect)
 			return
 		}
+		if err := h.settingsQueries.Set(ctx, "owner_username", user.Login); err != nil {
+			slog.Error("failed to set owner username", "error", err)
+			// Non-fatal, continue
+		}
+		slog.Info("first user registered as owner", "github_id", user.ID, "username", user.Login)
+	} else {
+		// Verify this is the owner
+		if ownerGitHubID != strconv.FormatInt(user.ID, 10) {
+			slog.Warn("unauthorized login attempt", "github_id", user.ID, "username", user.Login, "owner_github_id", ownerGitHubID)
+			h.githubClient.SetToken("") // Clear the token
+			http.Redirect(w, r, "/oauth/github/login?error="+url.QueryEscape("You are not the owner of this instance"), http.StatusTemporaryRedirect)
+			return
+		}
+
+		// Update username if changed (GitHub allows username changes)
+		if currentUsername, _ := h.settingsQueries.Get(ctx, "owner_username"); currentUsername != user.Login {
+			h.settingsQueries.Set(ctx, "owner_username", user.Login)
+			slog.Info("owner username updated", "old", currentUsername, "new", user.Login)
+		}
 	}
+
+	username := user.Login
 
 	// Save the token to settings (for API access)
 	if err := h.settingsQueries.Set(ctx, "github_token", tokenResp.AccessToken); err != nil {

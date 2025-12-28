@@ -209,7 +209,12 @@ func (h *AppHandler) installWebhook(ctx context.Context, app *models.App) bool {
 	// Generate webhook secret if not set
 	secret := app.GetWebhookSecret()
 	if secret == "" {
-		secret = generateWebhookSecret()
+		var err error
+		secret, err = generateWebhookSecret()
+		if err != nil {
+			slog.Warn("failed to generate webhook secret", "error", err)
+			return false
+		}
 		app.WebhookSecret = sql.NullString{String: secret, Valid: true}
 		// Update app with the generated secret
 		if err := h.appQueries.Update(ctx, app); err != nil {
@@ -237,12 +242,12 @@ func (h *AppHandler) installWebhook(ctx context.Context, app *models.App) bool {
 }
 
 // generateWebhookSecret generates a random webhook secret
-func generateWebhookSecret() string {
+func generateWebhookSecret() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		return ""
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
-	return hex.EncodeToString(bytes)
+	return hex.EncodeToString(bytes), nil
 }
 
 // Update handles PUT /api/apps/{appID}

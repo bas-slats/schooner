@@ -43,8 +43,8 @@ apps:
     branch: "main"
     # Webhook secret from GitHub (optional but recommended)
     webhook_secret: "${WEBHOOK_SECRET_MY_APP}"
-    # Build strategy: dockerfile, compose, or buildpacks
-    build_strategy: "dockerfile"
+    # Build strategy: autodetect, dockerfile, or compose
+    build_strategy: "autodetect"
     # Path to Dockerfile relative to repo root
     dockerfile_path: "Dockerfile"
     # Build context directory
@@ -65,15 +65,12 @@ apps:
   #   compose_file: "docker-compose.yaml"
   #   auto_deploy: true
 
-  # Example: Buildpacks (no Dockerfile needed)
+  # Example: Autodetect (automatically detects Dockerfile or docker-compose)
   # - name: "api-service"
   #   description: "Node.js API service"
   #   repo_url: "https://github.com/username/api-service.git"
   #   branch: "main"
-  #   build_strategy: "buildpacks"
+  #   build_strategy: "autodetect"
   #   container_name: "api-service"
   #   image_name: "api-service"
-  #   env_vars:
-  #     NODE_ENV: "production"
-  #     PORT: "3000"
   #   auto_deploy: true

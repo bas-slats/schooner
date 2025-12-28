@@ -39,17 +39,21 @@ var composeFileNames = []string{
 	"compose.yaml",
 }
 
-// FindComposeFile finds the compose file in the repo, checking configured name first
+// FindComposeFile finds the compose file in the repo, checking configured name first.
+// Returns empty string if not found or if path validation fails.
 func FindComposeFile(repoPath, configuredFile string) string {
 	// Try configured file first
 	if configuredFile != "" {
-		composePath := filepath.Join(repoPath, configuredFile)
-		if _, err := os.Stat(composePath); err == nil {
-			return configuredFile
+		// Validate path to prevent traversal
+		composePath, err := build.SafePath(repoPath, configuredFile)
+		if err == nil {
+			if _, err := os.Stat(composePath); err == nil {
+				return configuredFile
+			}
 		}
 	}
 
-	// Try common names
+	// Try common names (these are safe, hardcoded values)
 	for _, name := range composeFileNames {
 		composePath := filepath.Join(repoPath, name)
 		if _, err := os.Stat(composePath); err == nil {
