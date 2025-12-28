@@ -116,6 +116,7 @@ func getGrafanaDatasourceConfig() string {
 datasources:
   - name: Loki
     type: loki
+    uid: loki
     access: proxy
     url: http://schooner-loki:3100
     isDefault: true
