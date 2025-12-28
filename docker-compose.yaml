@@ -5,9 +5,7 @@ services:
   schooner:
     build:
       context: .
-      args:
-        VERSION: ${VERSION:-dev}
-    image: schooner:${VERSION:-latest}
+    image: schooner:latest
     container_name: schooner
     restart: unless-stopped
     ports:

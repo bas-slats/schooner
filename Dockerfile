@@ -17,10 +17,10 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binary with version embedded
-ARG VERSION=dev
-RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags="-w -s -X main.version=${VERSION}" \
+# Build binary with commit SHA embedded
+RUN COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-w -s -X schooner/internal/version.Commit=${COMMIT}" \
     -o /homelab-cd \
     ./cmd/schooner
 
