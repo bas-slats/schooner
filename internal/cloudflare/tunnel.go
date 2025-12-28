@@ -59,6 +59,7 @@ type Manager struct {
 	appQueries      AppGetter
 	mu              sync.Mutex
 	configDir       string
+	dnsClient       *DNSClient
 }
 
 // AppGetter interface for getting apps from the database
@@ -122,7 +123,7 @@ func (m *Manager) writeCredentials(payload *tunnelTokenPayload) error {
 }
 
 // getTunnelConfig loads tunnel configuration from database or config file
-func (m *Manager) getTunnelConfig(ctx context.Context) (token, tunnelID, domain string) {
+func (m *Manager) getTunnelConfig(ctx context.Context) (token, tunnelID, domain, apiToken string) {
 	// Try database first
 	if m.settingsQueries != nil {
 		if t, err := m.settingsQueries.Get(ctx, "cloudflare_tunnel_token"); err == nil && t != "" {
@@ -133,6 +134,9 @@ func (m *Manager) getTunnelConfig(ctx context.Context) (token, tunnelID, domain 
 		}
 		if d, err := m.settingsQueries.Get(ctx, "cloudflare_domain"); err == nil && d != "" {
 			domain = d
+		}
+		if at, err := m.settingsQueries.Get(ctx, "cloudflare_api_token"); err == nil && at != "" {
+			apiToken = at
 		}
 	}
 
@@ -146,19 +150,22 @@ func (m *Manager) getTunnelConfig(ctx context.Context) (token, tunnelID, domain 
 	if domain == "" {
 		domain = m.cfg.Cloudflare.Domain
 	}
+	if apiToken == "" {
+		apiToken = m.cfg.Cloudflare.APIToken
+	}
 
 	return
 }
 
 // IsConfigured returns true if Cloudflare tunnel is configured
 func (m *Manager) IsConfigured() bool {
-	token, _, domain := m.getTunnelConfig(context.Background())
+	token, _, domain, _ := m.getTunnelConfig(context.Background())
 	return token != "" && domain != ""
 }
 
 // Start starts the cloudflared container
 func (m *Manager) Start(ctx context.Context) error {
-	token, _, domain := m.getTunnelConfig(ctx)
+	token, _, domain, apiToken := m.getTunnelConfig(ctx)
 
 	if token == "" || domain == "" {
 		slog.Info("Cloudflare tunnel not configured, skipping", "has_token", token != "", "has_domain", domain != "")
@@ -169,6 +176,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	payload, err := decodeToken(token)
 	if err != nil {
 		return fmt.Errorf("failed to decode tunnel token: %w", err)
+	}
+
+	// Initialize DNS client if we have an API token
+	if apiToken != "" {
+		m.dnsClient = NewDNSClient(apiToken)
 	}
 
 	m.mu.Lock()
@@ -198,6 +210,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	if err := m.writeConfigForApps(apps, payload.TunnelID, domain); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	// Configure DNS records if we have an API token
+	if m.dnsClient != nil {
+		m.configureDNSRecords(ctx, apps, payload.TunnelID, domain)
 	}
 
 	// Stop existing container if any
@@ -234,6 +251,33 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	slog.Info("cloudflared started", "container_id", containerID[:12])
 	return nil
+}
+
+// configureDNSRecords sets up DNS CNAME records for tunnel hostnames
+func (m *Manager) configureDNSRecords(ctx context.Context, apps []*models.App, tunnelID, domain string) {
+	// Configure schooner's own hostname
+	if m.cfg.Server.BaseURL != "" {
+		if parsed, err := url.Parse(m.cfg.Server.BaseURL); err == nil && parsed.Host != "" {
+			if err := m.dnsClient.EnsureTunnelCNAME(ctx, parsed.Host, tunnelID); err != nil {
+				slog.Warn("failed to configure DNS for schooner", "hostname", parsed.Host, "error", err)
+			}
+		}
+	}
+
+	// Configure DNS for each app
+	for _, app := range apps {
+		if !app.Enabled {
+			continue
+		}
+		subdomain := app.GetSubdomain()
+		if subdomain == "" {
+			continue
+		}
+		hostname := fmt.Sprintf("%s.%s", subdomain, domain)
+		if err := m.dnsClient.EnsureTunnelCNAME(ctx, hostname, tunnelID); err != nil {
+			slog.Warn("failed to configure DNS for app", "app", app.Name, "hostname", hostname, "error", err)
+		}
+	}
 }
 
 // writeConfigForApps writes the tunnel config with routes for the given apps
@@ -308,7 +352,7 @@ func (m *Manager) UpdateRoutes(ctx context.Context, apps []*models.App) error {
 		return nil
 	}
 
-	token, _, domain := m.getTunnelConfig(ctx)
+	token, _, domain, apiToken := m.getTunnelConfig(ctx)
 	if domain == "" {
 		return fmt.Errorf("domain not configured")
 	}
@@ -319,12 +363,22 @@ func (m *Manager) UpdateRoutes(ctx context.Context, apps []*models.App) error {
 		return fmt.Errorf("failed to decode token: %w", err)
 	}
 
+	// Initialize DNS client if we have an API token
+	if apiToken != "" && m.dnsClient == nil {
+		m.dnsClient = NewDNSClient(apiToken)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Write new config
 	if err := m.writeConfigForApps(apps, payload.TunnelID, domain); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	// Configure DNS records if we have an API token
+	if m.dnsClient != nil {
+		m.configureDNSRecords(ctx, apps, payload.TunnelID, domain)
 	}
 
 	// Count valid routes

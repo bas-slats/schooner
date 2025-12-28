@@ -235,6 +235,10 @@ func (h *SettingsHandler) GetTunnelStatus(w http.ResponseWriter, r *http.Request
 	domain, _ := h.settingsQueries.Get(ctx, "cloudflare_domain")
 	status["domain"] = domain
 
+	// Check if API token is configured
+	apiToken, _ := h.settingsQueries.Get(ctx, "cloudflare_api_token")
+	status["has_api_token"] = apiToken != ""
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
@@ -247,6 +251,7 @@ func (h *SettingsHandler) SetTunnelConfig(w http.ResponseWriter, r *http.Request
 		TunnelToken string `json:"tunnel_token"`
 		TunnelID    string `json:"tunnel_id"`
 		Domain      string `json:"domain"`
+		APIToken    string `json:"api_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -278,7 +283,15 @@ func (h *SettingsHandler) SetTunnelConfig(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	slog.Info("cloudflare tunnel settings saved", "domain", req.Domain)
+	if req.APIToken != "" {
+		if err := h.settingsQueries.Set(ctx, "cloudflare_api_token", req.APIToken); err != nil {
+			slog.Error("failed to save API token", "error", err)
+			http.Error(w, "failed to save API token", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	slog.Info("cloudflare tunnel settings saved", "domain", req.Domain, "has_api_token", req.APIToken != "")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

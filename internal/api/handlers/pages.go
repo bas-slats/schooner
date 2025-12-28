@@ -1524,6 +1524,13 @@ func (h *PageHandler) renderTunnelSettings(w http.ResponseWriter) {
                                 placeholder="abc123..."
                                 class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
                         </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-sm text-gray-500 mb-1">API Token (optional)</label>
+                            <input type="password" name="api_token" id="tunnel-api-token-input"
+                                placeholder="your-cloudflare-api-token"
+                                class="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-900">
+                            <p class="text-xs text-gray-400 mt-1">For automatic DNS management. Create at <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" class="text-purple-600 hover:text-purple-700">Cloudflare API Tokens</a> with Zone:DNS:Edit permission</p>
+                        </div>
                     </div>
                     <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Save Tunnel Config</button>
                 </form>
@@ -1574,7 +1581,8 @@ func (h *PageHandler) renderTunnelSettings(w http.ResponseWriter) {
                 const data = {
                     tunnel_token: form.querySelector('input[name="tunnel_token"]').value,
                     domain: form.querySelector('input[name="domain"]').value,
-                    tunnel_id: form.querySelector('input[name="tunnel_id"]').value
+                    tunnel_id: form.querySelector('input[name="tunnel_id"]').value,
+                    api_token: form.querySelector('input[name="api_token"]').value
                 };
 
                 fetch('/api/settings/tunnel', {
