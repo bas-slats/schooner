@@ -301,8 +301,9 @@ func (m *Manager) startGrafana(ctx context.Context, configDir string, port int) 
 		Env: []string{
 			"GF_SECURITY_ADMIN_PASSWORD=" + adminPassword,
 			"GF_AUTH_ANONYMOUS_ENABLED=true",
-			"GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer",
+			"GF_AUTH_ANONYMOUS_ORG_ROLE=Admin",
 			"GF_USERS_ALLOW_SIGN_UP=false",
+			"GF_AUTH_DISABLE_LOGIN_FORM=true",
 		},
 		Networks:      []string{observabilityNetwork},
 		RestartPolicy: "unless-stopped",
