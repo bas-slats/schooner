@@ -178,10 +178,10 @@ func (h *AppHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update tunnel routes if configured
-	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
-		if err := h.tunnelManager.AddRoute(ctx, app); err != nil {
-			slog.Warn("failed to add tunnel route", "app", app.Name, "error", err)
+	// Update tunnel routes if app has subdomain/port configured
+	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() && app.GetSubdomain() != "" && app.GetPublicPort() != 0 {
+		if err := h.tunnelManager.Reload(ctx); err != nil {
+			slog.Warn("failed to reload tunnel routes", "app", app.Name, "error", err)
 		}
 	}
 
@@ -319,10 +319,10 @@ func (h *AppHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update tunnel routes if configured
+	// Update tunnel routes if configured (reload all routes when app changes)
 	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
-		if err := h.tunnelManager.AddRoute(ctx, app); err != nil {
-			slog.Warn("failed to update tunnel route", "app", app.Name, "error", err)
+		if err := h.tunnelManager.Reload(ctx); err != nil {
+			slog.Warn("failed to reload tunnel routes", "app", app.Name, "error", err)
 		}
 	}
 
@@ -350,17 +350,17 @@ func (h *AppHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove tunnel route if configured
-	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
-		if err := h.tunnelManager.RemoveRoute(ctx, app); err != nil {
-			slog.Warn("failed to remove tunnel route", "app", app.Name, "error", err)
-		}
-	}
-
 	if err := h.appQueries.Delete(ctx, appID); err != nil {
 		slog.Error("failed to delete app", "appID", appID, "error", err)
 		http.Error(w, "failed to delete app", http.StatusInternalServerError)
 		return
+	}
+
+	// Reload tunnel routes after app deletion
+	if h.tunnelManager != nil && h.tunnelManager.IsConfigured() {
+		if err := h.tunnelManager.Reload(ctx); err != nil {
+			slog.Warn("failed to reload tunnel routes after delete", "app", app.Name, "error", err)
+		}
 	}
 
 	slog.Info("app deleted", "id", appID, "name", app.Name)
