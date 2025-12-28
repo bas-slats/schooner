@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"schooner/internal/build"
 	"schooner/internal/docker"
@@ -187,8 +188,14 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 		args = append(args, "--wait")
 	}
 
-	// Run docker compose up
-	upCmd := exec.CommandContext(ctx, "docker", args...)
+	// For self-deploy, we need to completely detach the process so it survives
+	// after our container is stopped. Use exec.Command without context.
+	var upCmd *exec.Cmd
+	if selfDeploy {
+		upCmd = exec.Command("docker", args...)
+	} else {
+		upCmd = exec.CommandContext(ctx, "docker", args...)
+	}
 	upCmd.Dir = opts.RepoPath
 	upCmd.Env = env
 
@@ -215,7 +222,8 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 	}()
 
 	if selfDeploy {
-		// Don't wait - we'll be killed when compose replaces us
+		// Give compose a moment to start before we exit
+		time.Sleep(2 * time.Second)
 		fmt.Fprintf(opts.LogWriter, "Deploy command started, container will be replaced shortly...\n")
 		return nil
 	}
