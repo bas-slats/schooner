@@ -173,7 +173,9 @@ func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error
 		"-f", composePath,
 		"up",
 		"-d",
+		"--force-recreate",
 		"--remove-orphans",
+		"--wait",
 	)
 	upCmd.Dir = opts.RepoPath
 	upCmd.Env = env
