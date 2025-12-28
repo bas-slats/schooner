@@ -233,9 +233,23 @@ func (o *Orchestrator) processBuild(buildID string) {
 	// Prepare build options
 	// Use commit SHA for version, fall back to build ID
 	version := build.ID[:8]
+	commitSHA := ""
 	if len(build.CommitSHA.String) >= 8 {
 		version = build.CommitSHA.String[:8]
+		commitSHA = build.CommitSHA.String
 	}
+
+	// Create env vars with git info injected
+	envVars := make(map[string]string)
+	for k, v := range app.EnvVars {
+		envVars[k] = v
+	}
+	// Inject git SHA into env vars (can be overridden by user if needed)
+	if commitSHA != "" {
+		envVars["GIT_SHA"] = commitSHA
+		envVars["GIT_COMMIT"] = commitSHA
+	}
+	envVars["VERSION"] = version
 
 	buildOpts := BuildOptions{
 		AppID:        app.ID,
@@ -246,7 +260,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 		BuildContext: app.BuildContext,
 		Dockerfile:   app.DockerfilePath,
 		ComposeFile:  app.ComposeFile,
-		EnvVars:      app.EnvVars,
+		EnvVars:      envVars,
 		BuildArgs: map[string]string{
 			"VERSION": version,
 		},
@@ -362,7 +376,7 @@ func (o *Orchestrator) processBuild(buildID string) {
 		containerConfig := docker.ContainerConfig{
 			Name:          app.GetContainerName(),
 			Image:         result.ImageTag,
-			Env:           envMapToSlice(app.EnvVars),
+			Env:           envMapToSlice(envVars),
 			RestartPolicy: "unless-stopped",
 			Labels: map[string]string{
 				"schooner.managed":  "true",
