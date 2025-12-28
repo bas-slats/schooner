@@ -297,7 +297,8 @@ func (m *Manager) startGrafana(ctx context.Context, dataDir string, port int) er
 		},
 		Env: []string{
 			"GF_SECURITY_ADMIN_PASSWORD=" + adminPassword,
-			"GF_AUTH_ANONYMOUS_ENABLED=false",
+			"GF_AUTH_ANONYMOUS_ENABLED=true",
+			"GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer",
 			"GF_USERS_ALLOW_SIGN_UP=false",
 		},
 		Networks:      []string{observabilityNetwork},
