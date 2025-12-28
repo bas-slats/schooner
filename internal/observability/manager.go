@@ -427,10 +427,18 @@ func (m *Manager) writeConfigs(configDir, lokiRetention string) error {
 		return fmt.Errorf("failed to write Grafana dashboard provisioner config: %w", err)
 	}
 
-	// Write Schooner dashboard
-	schoonerDashboard := getSchoonerDashboard()
-	if err := os.WriteFile(filepath.Join(configDir, "grafana-provisioning", "dashboards", "schooner.json"), []byte(schoonerDashboard), 0644); err != nil {
-		return fmt.Errorf("failed to write Schooner dashboard: %w", err)
+	// Write dashboards
+	dashboards := map[string]string{
+		"schooner-logs.json":     getSchoonerDashboard(),
+		"schooner-errors.json":   getErrorsDashboard(),
+		"schooner-services.json": getServicesDashboard(),
+	}
+
+	for filename, content := range dashboards {
+		path := filepath.Join(configDir, "grafana-provisioning", "dashboards", filename)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write dashboard %s: %w", filename, err)
+		}
 	}
 
 	return nil

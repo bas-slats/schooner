@@ -145,64 +145,73 @@ providers:
 // getSchoonerDashboard returns the pre-built Schooner logs dashboard
 func getSchoonerDashboard() string {
 	return `{
-  "annotations": {
-    "list": []
-  },
+  "annotations": {"list": []},
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
-  "links": [],
-  "liveNow": false,
+  "links": [
+    {"title": "Errors", "url": "/d/schooner-errors", "type": "link"},
+    {"title": "Services", "url": "/d/schooner-services", "type": "link"}
+  ],
   "panels": [
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "loki"
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}},
+        "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
       "id": 1,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "editorMode": "builder",
-          "expr": "sum by(app) (count_over_time({app=~\".+\"}[$__interval]))",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(app) (count_over_time({app=~\".+\"}[$__interval]))",
+        "legendFormat": "{{app}}",
+        "refId": "A"
+      }],
       "title": "Log Volume by App",
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "loki"
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}},
+        "overrides": []
       },
-      "gridPos": {
-        "h": 20,
-        "w": 24,
-        "x": 0,
-        "y": 4
+      "gridPos": {"h": 5, "w": 12, "x": 0, "y": 5},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\"}[$__interval]))",
+        "legendFormat": "{{container}}",
+        "refId": "A"
+      }],
+      "title": "Log Volume by Container",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"fixedColor": "red", "mode": "fixed"}},
+        "overrides": []
       },
+      "gridPos": {"h": 5, "w": 12, "x": 12, "y": 5},
+      "id": 4,
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum(count_over_time({app=~\".+\"} |~ \"(?i)(error|err|fail|fatal|panic|exception)\"[$__interval]))",
+        "legendFormat": "Errors",
+        "refId": "A"
+      }],
+      "title": "Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 15, "w": 24, "x": 0, "y": 10},
       "id": 2,
       "options": {
         "dedupStrategy": "none",
@@ -214,87 +223,303 @@ func getSchoonerDashboard() string {
         "sortOrder": "Descending",
         "wrapLogMessage": true
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "editorMode": "builder",
-          "expr": "{app=~\"${app:regex}\", container=~\"${container:regex}\"}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "{app=~\"${app:regex}\", container=~\"${container:regex}\"} |~ \"${search}\"",
+        "refId": "A"
+      }],
       "title": "Container Logs",
       "type": "logs"
     }
   ],
-  "refresh": "5s",
+  "refresh": "10s",
   "schemaVersion": 38,
-  "style": "dark",
   "tags": ["schooner", "logs"],
   "templating": {
     "list": [
       {
-        "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
-        },
-        "datasource": {
-          "type": "loki",
-          "uid": "loki"
-        },
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "loki", "uid": "loki"},
         "definition": "label_values(app)",
-        "hide": 0,
         "includeAll": true,
         "label": "App",
         "multi": true,
         "name": "app",
-        "options": [],
         "query": "label_values(app)",
         "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       },
       {
-        "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
-        },
-        "datasource": {
-          "type": "loki",
-          "uid": "loki"
-        },
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "loki", "uid": "loki"},
         "definition": "label_values(container)",
-        "hide": 0,
         "includeAll": true,
         "label": "Container",
         "multi": true,
         "name": "container",
-        "options": [],
         "query": "label_values(container)",
         "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "current": {"selected": false, "text": "", "value": ""},
+        "label": "Search",
+        "name": "search",
+        "type": "textbox"
       }
     ]
   },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "",
+  "time": {"from": "now-1h", "to": "now"},
   "title": "Schooner Logs",
   "uid": "schooner-logs",
-  "version": 1,
-  "weekStart": ""
+  "version": 1
+}`
+}
+
+// getErrorsDashboard returns the errors dashboard
+func getErrorsDashboard() string {
+	return `{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"title": "Logs", "url": "/d/schooner-logs", "type": "link"},
+    {"title": "Services", "url": "/d/schooner-services", "type": "link"}
+  ],
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(app) (count_over_time({app=~\".+\"} |~ \"(?i)(error|err|fail|fatal|panic|exception)\"[$__interval]))",
+        "legendFormat": "{{app}}",
+        "refId": "A"
+      }],
+      "title": "Errors by App",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "mappings": [], "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 6},
+      "id": 2,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(app) (count_over_time({app=~\".+\"} |~ \"(?i)(error|err|fail|fatal|panic|exception)\"[$__range]))",
+        "legendFormat": "{{app}}",
+        "refId": "A"
+      }],
+      "title": "Total Errors by App",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "mappings": [], "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 6},
+      "id": 3,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\"} |~ \"(?i)(error|err|fail|fatal|panic|exception)\"[$__range]))",
+        "legendFormat": "{{container}}",
+        "refId": "A"
+      }],
+      "title": "Total Errors by Container",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 12},
+      "id": 4,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "{app=~\"${app:regex}\"} |~ \"(?i)(error|err|fail|fatal|panic|exception)\"",
+        "refId": "A"
+      }],
+      "title": "Error Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["schooner", "errors"],
+  "templating": {
+    "list": [{
+      "current": {"selected": true, "text": "All", "value": "$__all"},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "definition": "label_values(app)",
+      "includeAll": true,
+      "label": "App",
+      "multi": true,
+      "name": "app",
+      "query": "label_values(app)",
+      "refresh": 2,
+      "sort": 1,
+      "type": "query"
+    }]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Schooner Errors",
+  "uid": "schooner-errors",
+  "version": 1
+}`
+}
+
+// getServicesDashboard returns the infrastructure services dashboard
+func getServicesDashboard() string {
+	return `{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"title": "Logs", "url": "/d/schooner-logs", "type": "link"},
+    {"title": "Errors", "url": "/d/schooner-errors", "type": "link"}
+  ],
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}},
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "sum by(service) (count_over_time({service=~\".+\"}[$__interval]))",
+        "legendFormat": "{{service}}",
+        "refId": "A"
+      }],
+      "title": "Service Log Volume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "id": 2,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "{service=\"cloudflared\"}",
+        "refId": "A"
+      }],
+      "title": "Cloudflare Tunnel Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "id": 3,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "{service=~\"loki|promtail|grafana\"}",
+        "refId": "A"
+      }],
+      "title": "Observability Stack Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 14},
+      "id": 4,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki", "uid": "loki"},
+        "expr": "{service=~\"${service:regex}\"} |~ \"${search}\"",
+        "refId": "A"
+      }],
+      "title": "All Service Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["schooner", "services"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "loki", "uid": "loki"},
+        "definition": "label_values(service)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "query": "label_values(service)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {"selected": false, "text": "", "value": ""},
+        "label": "Search",
+        "name": "search",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "title": "Schooner Services",
+  "uid": "schooner-services",
+  "version": 1
 }`
 }
