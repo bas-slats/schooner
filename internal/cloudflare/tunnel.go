@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -244,6 +245,19 @@ func (m *Manager) Start(ctx context.Context) error {
 func (m *Manager) writeConfigForApps(apps []*models.App, tunnelID, domain string) error {
 	var rules []IngressRule
 
+	// Add schooner's own route first (from base_url config)
+	if m.cfg.Server.BaseURL != "" {
+		if parsed, err := url.Parse(m.cfg.Server.BaseURL); err == nil && parsed.Host != "" {
+			schoonerService := fmt.Sprintf("http://localhost:%d", m.cfg.Server.Port)
+			rules = append(rules, IngressRule{
+				Hostname: parsed.Host,
+				Service:  schoonerService,
+			})
+			slog.Debug("added schooner tunnel route", "hostname", parsed.Host, "service", schoonerService)
+		}
+	}
+
+	// Add app routes
 	for _, app := range apps {
 		if !app.Enabled {
 			continue
