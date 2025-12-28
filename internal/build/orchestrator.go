@@ -268,6 +268,25 @@ func (o *Orchestrator) processBuild(buildID string) {
 	o.buildQueries.Update(ctx, build)
 	fmt.Fprintf(logWriter, "\n--- Deploying ---\n\n")
 
+	// Check for self-deployment (would kill us mid-deploy)
+	if o.isSelfDeploy(app.GetContainerName()) {
+		fmt.Fprintf(logWriter, "\n⚠️  Self-deployment detected!\n")
+		fmt.Fprintf(logWriter, "Cannot deploy '%s' - this would stop the schooner container that's running this build.\n", app.GetContainerName())
+		fmt.Fprintf(logWriter, "The image was built successfully. To deploy, manually run:\n")
+		fmt.Fprintf(logWriter, "  docker compose up -d --force-recreate\n")
+		fmt.Fprintf(logWriter, "  or: docker restart %s\n", app.GetContainerName())
+
+		// Mark as success since the build itself worked
+		build.Status = models.BuildStatusSuccess
+		build.FinishedAt = database.NullTime(time.Now())
+		o.buildQueries.Update(ctx, build)
+
+		duration := build.Duration()
+		fmt.Fprintf(logWriter, "\n--- Build Complete (deploy skipped) ---\n")
+		fmt.Fprintf(logWriter, "Duration: %s\n", duration.Round(time.Second))
+		return
+	}
+
 	// Deploy based on strategy
 	if buildStrategy == models.BuildStrategyCompose {
 		// For compose, run docker compose up
@@ -478,3 +497,42 @@ type composeStrategyWrapper interface {
 
 // Ensure strategies can be asserted
 var _ io.Writer = (*buildLogWriter)(nil)
+
+// isSelfDeploy checks if we're trying to deploy the container we're running in.
+// This would kill us mid-deployment, so we need to skip deployment in this case.
+func (o *Orchestrator) isSelfDeploy(targetContainerName string) bool {
+	// Check if we're running in a Docker container
+	if _, err := os.Stat("/.dockerenv"); os.IsNotExist(err) {
+		return false // Not in Docker, safe to deploy anything
+	}
+
+	// Get our hostname (in Docker, this is typically the container ID or name)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return false
+	}
+
+	// Check if our hostname matches the target container name
+	// Docker sets hostname to container ID by default, but it can be set to the container name
+	if hostname == targetContainerName {
+		return true
+	}
+
+	// Also check by querying Docker for our container's name
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	status, err := o.dockerClient.GetContainerStatus(ctx, hostname)
+	if err != nil || status == nil {
+		return false
+	}
+
+	// Check if our container's name matches the target
+	// Container names from Docker API may include leading slash
+	containerName := status.Name
+	if len(containerName) > 0 && containerName[0] == '/' {
+		containerName = containerName[1:]
+	}
+
+	return containerName == targetContainerName
+}
