@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"schooner/internal/build"
 	"schooner/internal/docker"
@@ -188,14 +187,41 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 		args = append(args, "--wait")
 	}
 
-	// For self-deploy, we need to completely detach the process so it survives
-	// after our container is stopped. Use exec.Command without context.
-	var upCmd *exec.Cmd
 	if selfDeploy {
-		upCmd = exec.Command("docker", args...)
-	} else {
-		upCmd = exec.CommandContext(ctx, "docker", args...)
+		// For self-deploy, we need to truly detach the process so it survives
+		// after our container is stopped. We use a helper container that runs
+		// docker compose, ensuring the command completes even if we're killed.
+		fmt.Fprintf(opts.LogWriter, "Starting self-deploy via helper container...\n")
+
+		// Build the helper script
+		script := fmt.Sprintf(`
+			cd %s
+			sleep 3
+			docker compose -f %s up -d --force-recreate --remove-orphans
+			echo "Self-deploy complete"
+		`, opts.RepoPath, composePath)
+
+		// Run helper container with docker socket mounted
+		helperCmd := exec.Command("docker", "run", "-d", "--rm",
+			"--name", "schooner-compose-helper",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock",
+			"-v", opts.RepoPath+":"+opts.RepoPath,
+			"-w", opts.RepoPath,
+			"docker:cli",
+			"sh", "-c", script)
+		helperCmd.Env = env
+
+		output, err := helperCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to start helper container: %w, output: %s", err, string(output))
+		}
+
+		fmt.Fprintf(opts.LogWriter, "Helper container started, container will be replaced in ~3 seconds...\n")
+		return nil
 	}
+
+	// Normal (non-self-deploy) path
+	upCmd := exec.CommandContext(ctx, "docker", args...)
 	upCmd.Dir = opts.RepoPath
 	upCmd.Env = env
 
@@ -220,13 +246,6 @@ func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOpt
 			fmt.Fprintf(opts.LogWriter, "%s\n", scanner.Text())
 		}
 	}()
-
-	if selfDeploy {
-		// Give compose a moment to start before we exit
-		time.Sleep(2 * time.Second)
-		fmt.Fprintf(opts.LogWriter, "Deploy command started, container will be replaced shortly...\n")
-		return nil
-	}
 
 	if err := upCmd.Wait(); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
