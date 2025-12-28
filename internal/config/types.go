@@ -92,10 +92,10 @@ func Default() *Config {
 			Port: 7123,
 		},
 		Database: DatabaseConfig{
-			Path: "/data/homelab-cd.db",
+			Path: "./data/schooner.db",
 		},
 		Git: GitConfig{
-			WorkDir: "/data/repos",
+			WorkDir: "./data/repos",
 		},
 		Docker: DockerConfig{
 			CleanupEnabled: true,
