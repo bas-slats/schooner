@@ -193,7 +193,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create session for the user
-	session, err := h.sessionStore.Create(username, tokenResp.AccessToken)
+	session, err := h.sessionStore.Create(username, user.AvatarURL, tokenResp.AccessToken)
 	if err != nil {
 		slog.Error("failed to create session", "error", err)
 		http.Redirect(w, r, "/settings?error="+url.QueryEscape("Failed to create session"), http.StatusTemporaryRedirect)

@@ -44,10 +44,12 @@ func NewPageHandler(cfg *config.Config, appQueries *queries.AppQueries, buildQue
 }
 
 func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title string) {
-	// Get session for username display
+	// Get session for user display
 	username := ""
+	avatarURL := ""
 	if session := auth.GetSession(r.Context()); session != nil {
 		username = session.Username
+		avatarURL = session.AvatarURL
 	}
 
 	w.Header().Set("Content-Type", "text/html")
@@ -81,13 +83,16 @@ func (h *PageHandler) writeHeader(w http.ResponseWriter, r *http.Request, title 
                 <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
                 <a href="/settings" class="text-gray-600 hover:text-gray-900">Settings</a>
                 <span class="text-gray-400">|</span>
-                <span class="text-gray-600 text-sm">%s</span>
+                <div class="flex items-center space-x-2">
+                    <img src="%s" alt="%s" class="h-6 w-6 rounded-full">
+                    <span class="text-gray-600 text-sm">%s</span>
+                </div>
                 <a href="/logout" class="text-gray-500 hover:text-gray-700 text-sm">Logout</a>
             </div>
         </div>
     </nav>
     <main class="max-w-7xl mx-auto px-6 py-8">
-`, html.EscapeString(title), html.EscapeString(username))
+`, html.EscapeString(title), html.EscapeString(avatarURL), html.EscapeString(username), html.EscapeString(username))
 }
 
 func (h *PageHandler) writeFooter(w http.ResponseWriter) {

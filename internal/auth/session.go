@@ -11,6 +11,7 @@ import (
 type Session struct {
 	ID        string
 	Username  string
+	AvatarURL string
 	Token     string // GitHub access token
 	CreatedAt time.Time
 	ExpiresAt time.Time
@@ -37,7 +38,7 @@ func NewSessionStore(ttl time.Duration) *SessionStore {
 }
 
 // Create creates a new session
-func (s *SessionStore) Create(username, token string) (*Session, error) {
+func (s *SessionStore) Create(username, avatarURL, token string) (*Session, error) {
 	id, err := generateSessionID()
 	if err != nil {
 		return nil, err
@@ -46,6 +47,7 @@ func (s *SessionStore) Create(username, token string) (*Session, error) {
 	session := &Session{
 		ID:        id,
 		Username:  username,
+		AvatarURL: avatarURL,
 		Token:     token,
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(s.ttl),
