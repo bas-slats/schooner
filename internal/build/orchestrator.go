@@ -231,6 +231,12 @@ func (o *Orchestrator) processBuild(buildID string) {
 	}
 
 	// Prepare build options
+	// Use commit SHA for version, fall back to build ID
+	version := build.ID[:8]
+	if len(build.CommitSHA.String) >= 8 {
+		version = build.CommitSHA.String[:8]
+	}
+
 	buildOpts := BuildOptions{
 		AppID:        app.ID,
 		AppName:      app.Name,
@@ -241,7 +247,10 @@ func (o *Orchestrator) processBuild(buildID string) {
 		Dockerfile:   app.DockerfilePath,
 		ComposeFile:  app.ComposeFile,
 		EnvVars:      app.EnvVars,
-		LogWriter:    logWriter,
+		BuildArgs: map[string]string{
+			"VERSION": version,
+		},
+		LogWriter: logWriter,
 	}
 
 	// Validate
