@@ -144,13 +144,26 @@ func (s *ComposeStrategy) Build(ctx context.Context, opts build.BuildOptions) (*
 
 // Up brings up the compose services
 func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error {
+	return s.upWithOptions(ctx, opts, false)
+}
+
+// UpSelfDeploy brings up compose services for self-deployment (fire and forget)
+func (s *ComposeStrategy) UpSelfDeploy(ctx context.Context, opts build.BuildOptions) error {
+	return s.upWithOptions(ctx, opts, true)
+}
+
+func (s *ComposeStrategy) upWithOptions(ctx context.Context, opts build.BuildOptions, selfDeploy bool) error {
 	composeFile := FindComposeFile(opts.RepoPath, opts.ComposeFile)
 	if composeFile == "" {
 		return fmt.Errorf("compose file not found")
 	}
 	composePath := filepath.Join(opts.RepoPath, composeFile)
 
-	fmt.Fprintf(opts.LogWriter, "Starting services with Docker Compose\n")
+	if selfDeploy {
+		fmt.Fprintf(opts.LogWriter, "Self-deployment: Starting services with Docker Compose (fire and forget)\n")
+	} else {
+		fmt.Fprintf(opts.LogWriter, "Starting services with Docker Compose\n")
+	}
 
 	// Write .env file with app's environment variables
 	if len(opts.EnvVars) > 0 {
@@ -168,15 +181,14 @@ func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	// Build command args
+	args := []string{"compose", "-f", composePath, "up", "-d", "--force-recreate", "--remove-orphans"}
+	if !selfDeploy {
+		args = append(args, "--wait")
+	}
+
 	// Run docker compose up
-	upCmd := exec.CommandContext(ctx, "docker", "compose",
-		"-f", composePath,
-		"up",
-		"-d",
-		"--force-recreate",
-		"--remove-orphans",
-		"--wait",
-	)
+	upCmd := exec.CommandContext(ctx, "docker", args...)
 	upCmd.Dir = opts.RepoPath
 	upCmd.Env = env
 
@@ -201,6 +213,12 @@ func (s *ComposeStrategy) Up(ctx context.Context, opts build.BuildOptions) error
 			fmt.Fprintf(opts.LogWriter, "%s\n", scanner.Text())
 		}
 	}()
+
+	if selfDeploy {
+		// Don't wait - we'll be killed when compose replaces us
+		fmt.Fprintf(opts.LogWriter, "Deploy command started, container will be replaced shortly...\n")
+		return nil
+	}
 
 	if err := upCmd.Wait(); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)

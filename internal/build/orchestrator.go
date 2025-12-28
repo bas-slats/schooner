@@ -283,35 +283,69 @@ func (o *Orchestrator) processBuild(buildID string) {
 		}
 	}
 
-	// Check for self-deployment (would kill us mid-deploy)
-	if o.isSelfDeploy(app.GetContainerName()) {
-		fmt.Fprintf(logWriter, "\n⚠️  Self-deployment detected!\n")
-		fmt.Fprintf(logWriter, "Cannot deploy '%s' - this would stop the schooner container that's running this build.\n", app.GetContainerName())
-		fmt.Fprintf(logWriter, "The image was built successfully. To deploy, manually run:\n")
-		fmt.Fprintf(logWriter, "  docker compose up -d --force-recreate\n")
-		fmt.Fprintf(logWriter, "  or: docker restart %s\n", app.GetContainerName())
-
-		// Mark as success since the build itself worked
-		build.Status = models.BuildStatusSuccess
-		build.FinishedAt = database.NullTime(time.Now())
-		o.buildQueries.Update(ctx, build)
-
-		duration := build.Duration()
-		fmt.Fprintf(logWriter, "\n--- Build Complete (deploy skipped) ---\n")
-		fmt.Fprintf(logWriter, "Duration: %s\n", duration.Round(time.Second))
-		return
+	// Check for self-deployment
+	isSelfDeploy := o.isSelfDeploy(app.GetContainerName())
+	if isSelfDeploy {
+		fmt.Fprintf(logWriter, "⚠️  Self-deployment detected - using fire-and-forget deploy\n")
 	}
 
 	// Deploy based on strategy
 	if buildStrategy == models.BuildStrategyCompose {
 		// For compose, run docker compose up
 		composeStrategy := strategy.(composeStrategyWrapper)
-		if err := composeStrategy.Up(ctx, buildOpts); err != nil {
+
+		var err error
+		if isSelfDeploy {
+			err = composeStrategy.UpSelfDeploy(ctx, buildOpts)
+			if err == nil {
+				// Mark as success immediately - we're about to be killed
+				build.Status = models.BuildStatusSuccess
+				build.FinishedAt = database.NullTime(time.Now())
+				o.buildQueries.Update(context.Background(), build)
+
+				duration := build.Duration()
+				fmt.Fprintf(logWriter, "\n--- Build Complete (self-deploy) ---\n")
+				fmt.Fprintf(logWriter, "Duration: %s\n", duration.Round(time.Second))
+				fmt.Fprintf(logWriter, "Status: SUCCESS\n")
+				fmt.Fprintf(logWriter, "\nContainer will restart momentarily...\n")
+
+				logger.Info("self-deploy initiated", "duration", duration)
+				return
+			}
+		} else {
+			err = composeStrategy.Up(ctx, buildOpts)
+		}
+
+		if err != nil {
 			logger.Error("deploy failed", "error", err)
 			fmt.Fprintf(logWriter, "ERROR: Deploy failed: %s\n", err)
 			o.failBuild(ctx, build, fmt.Sprintf("deploy failed: %v", err))
 			return
 		}
+	} else if isSelfDeploy {
+		// Dockerfile self-deployment: use helper container
+		fmt.Fprintf(logWriter, "Self-deployment via helper container...\n")
+
+		if err := o.selfDeployDockerfile(ctx, app, result.ImageTag, logWriter); err != nil {
+			logger.Error("self-deploy failed", "error", err)
+			fmt.Fprintf(logWriter, "ERROR: Self-deploy failed: %s\n", err)
+			o.failBuild(ctx, build, fmt.Sprintf("self-deploy failed: %v", err))
+			return
+		}
+
+		// Mark as success - we're about to be killed
+		build.Status = models.BuildStatusSuccess
+		build.FinishedAt = database.NullTime(time.Now())
+		o.buildQueries.Update(context.Background(), build)
+
+		duration := build.Duration()
+		fmt.Fprintf(logWriter, "\n--- Build Complete (self-deploy) ---\n")
+		fmt.Fprintf(logWriter, "Duration: %s\n", duration.Round(time.Second))
+		fmt.Fprintf(logWriter, "Status: SUCCESS\n")
+		fmt.Fprintf(logWriter, "\nContainer will restart momentarily...\n")
+
+		logger.Info("self-deploy initiated", "duration", duration)
+		return
 	} else {
 		// For other strategies, run container
 		fmt.Fprintf(logWriter, "Deploying container: %s\n", app.GetContainerName())
@@ -534,6 +568,7 @@ func envMapToSlice(m map[string]string) []string {
 type composeStrategyWrapper interface {
 	Strategy
 	Up(ctx context.Context, opts BuildOptions) error
+	UpSelfDeploy(ctx context.Context, opts BuildOptions) error
 }
 
 // Ensure strategies can be asserted
@@ -576,4 +611,64 @@ func (o *Orchestrator) isSelfDeploy(targetContainerName string) bool {
 	}
 
 	return containerName == targetContainerName
+}
+
+// selfDeployDockerfile handles self-deployment for Dockerfile strategy using a helper container.
+// It spawns a small helper container that will stop the current container and start the new one.
+func (o *Orchestrator) selfDeployDockerfile(ctx context.Context, app *models.App, newImageTag string, logWriter io.Writer) error {
+	containerName := app.GetContainerName()
+
+	// Get current container info to copy its configuration
+	status, err := o.dockerClient.GetContainerStatus(ctx, containerName)
+	if err != nil || status == nil || status.State == "not_found" {
+		return fmt.Errorf("could not get current container status: %w", err)
+	}
+
+	fmt.Fprintf(logWriter, "Current container ID: %s\n", status.ID[:12])
+	fmt.Fprintf(logWriter, "New image: %s\n", newImageTag)
+
+	// Build the helper script that will do the swap
+	// The script waits 2 seconds (to let us finish), then stops old and starts new
+	helperScript := fmt.Sprintf(`
+		sleep 2
+		echo "Stopping old container: %s"
+		docker stop %s --time 30 || true
+		docker rm %s || true
+		echo "Starting new container with image: %s"
+		docker run -d --name %s \
+			--restart unless-stopped \
+			--label schooner.managed=true \
+			--label schooner.app=%s \
+			--label schooner.app-id=%s \
+			%s
+		echo "Self-deployment complete"
+	`, containerName, containerName, containerName, newImageTag, containerName, app.Name, app.ID, newImageTag)
+
+	// Create and start helper container
+	helperConfig := docker.ContainerConfig{
+		Name:  "schooner-deploy-helper",
+		Image: "docker:cli",
+		Cmd:   []string{"sh", "-c", helperScript},
+		Volumes: map[string]string{
+			"/var/run/docker.sock": "/var/run/docker.sock",
+		},
+		Labels: map[string]string{
+			"schooner.helper": "true",
+		},
+	}
+
+	fmt.Fprintf(logWriter, "Starting deployment helper container...\n")
+
+	// Remove any existing helper container
+	_ = o.dockerClient.StopAndRemove(ctx, "schooner-deploy-helper")
+
+	helperID, err := o.dockerClient.RunContainer(ctx, helperConfig)
+	if err != nil {
+		return fmt.Errorf("failed to start helper container: %w", err)
+	}
+
+	fmt.Fprintf(logWriter, "Helper container started: %s\n", helperID[:12])
+	fmt.Fprintf(logWriter, "Deployment will proceed in background...\n")
+
+	return nil
 }
