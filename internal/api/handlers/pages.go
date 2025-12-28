@@ -542,6 +542,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                         <th class="px-4 py-3 text-left text-sm">App</th>
                         <th class="px-4 py-3 text-left text-sm">Status</th>
                         <th class="px-4 py-3 text-left text-sm">Commit</th>
+                        <th class="px-4 py-3 text-left text-sm">Time</th>
                         <th class="px-4 py-3 text-left text-sm">Trigger</th>
                         <th class="px-4 py-3 text-left text-sm">Actions</th>
                     </tr>
@@ -549,7 +550,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                 <tbody>`)
 
 	if len(builds) == 0 {
-		fmt.Fprint(w, `<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No builds yet</td></tr>`)
+		fmt.Fprint(w, `<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">No builds yet</td></tr>`)
 	} else {
 		for _, build := range builds {
 			fmt.Fprintf(w, `
@@ -557,6 +558,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
                         <td class="px-4 py-3 text-sm">%s</td>
                         <td class="px-4 py-3 text-sm">%s</td>
                         <td class="px-4 py-3 text-sm font-mono">%s</td>
+                        <td class="px-4 py-3 text-sm text-gray-500">%s</td>
                         <td class="px-4 py-3 text-sm">%s</td>
                         <td class="px-4 py-3 text-sm">
                             <a href="/builds/%s" class="text-purple-600 hover:text-purple-700">View</a>
@@ -565,6 +567,7 @@ func (h *PageHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 				html.EscapeString(build.AppName),
 				buildStatusBadge(build.Status),
 				commitLink(build.AppRepoURL, build.GetCommitSHA()),
+				formatBuildTime(build.CreatedAt),
 				html.EscapeString(string(build.Trigger)),
 				html.EscapeString(build.ID))
 		}
@@ -1966,6 +1969,34 @@ func webhookButton(app *models.App) string {
 	}
 	return fmt.Sprintf(`<button type="button" onclick="configureWebhook('%s', '%s')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Configure Webhook</button>`,
 		app.ID, html.EscapeString(app.Name))
+}
+
+// formatBuildTime formats a build timestamp for display
+// If < 24 hours ago: shows relative time like "2h 30m ago"
+// If >= 24 hours ago: shows datetime like "Jan 2, 15:04"
+func formatBuildTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+
+	now := time.Now()
+	diff := now.Sub(t)
+
+	if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		minutes := int(diff.Minutes()) % 60
+
+		if hours > 0 {
+			return fmt.Sprintf("%dh %dm ago", hours, minutes)
+		}
+		if minutes > 0 {
+			return fmt.Sprintf("%dm ago", minutes)
+		}
+		return "just now"
+	}
+
+	// More than 24 hours ago - show date and time
+	return t.Format("Jan 2, 15:04")
 }
 
 func commitLink(repoURL, sha string) string {
