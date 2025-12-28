@@ -3,7 +3,7 @@ package version
 // These are set at build time via ldflags
 var (
 	// Commit is the git commit hash
-	Commit = "dev"
+	Commit = "unknown"
 )
 
 // GetShortCommit returns first 8 chars of commit hash
