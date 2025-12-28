@@ -217,3 +217,21 @@ func (q *BuildQueries) GetRunningBuilds(ctx context.Context) ([]*models.Build, e
 	return builds, nil
 }
 
+// CancelStaleBuilds marks all running builds as cancelled (used on startup)
+func (q *BuildQueries) CancelStaleBuilds(ctx context.Context) (int64, error) {
+	query := `
+		UPDATE builds
+		SET status = 'failed',
+		    error_message = 'Cancelled: server restarted',
+		    finished_at = CURRENT_TIMESTAMP
+		WHERE status IN ('pending', 'cloning', 'building', 'pushing', 'deploying')`
+
+	result, err := q.db.ExecContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cancel stale builds: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	return rows, nil
+}
+

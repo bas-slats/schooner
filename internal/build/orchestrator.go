@@ -131,9 +131,15 @@ func (o *Orchestrator) worker(id int) {
 	}
 }
 
+// Build timeout (1 hour)
+const buildTimeout = 1 * time.Hour
+
 // processBuild executes a single build
 func (o *Orchestrator) processBuild(buildID string) {
-	ctx := o.ctx
+	// Create timeout context for the entire build
+	ctx, cancel := context.WithTimeout(o.ctx, buildTimeout)
+	defer cancel()
+
 	logger := o.logger.With("buildID", buildID)
 
 	// Get build
@@ -268,6 +274,15 @@ func (o *Orchestrator) processBuild(buildID string) {
 	o.buildQueries.Update(ctx, build)
 	fmt.Fprintf(logWriter, "\n--- Deploying ---\n\n")
 
+	// Capture previous image for potential rollback (Dockerfile strategy only)
+	var previousImage string
+	if buildStrategy != models.BuildStrategyCompose {
+		if status, err := o.dockerClient.GetContainerStatus(ctx, app.GetContainerName()); err == nil && status != nil {
+			previousImage = status.Image
+			fmt.Fprintf(logWriter, "Previous image: %s (for rollback)\n", previousImage)
+		}
+	}
+
 	// Check for self-deployment (would kill us mid-deploy)
 	if o.isSelfDeploy(app.GetContainerName()) {
 		fmt.Fprintf(logWriter, "\n⚠️  Self-deployment detected!\n")
@@ -321,6 +336,25 @@ func (o *Orchestrator) processBuild(buildID string) {
 		if err != nil {
 			logger.Error("deploy failed", "error", err)
 			fmt.Fprintf(logWriter, "ERROR: Deploy failed: %s\n", err)
+
+			// Attempt rollback if we have a previous image
+			if previousImage != "" {
+				fmt.Fprintf(logWriter, "\n--- Attempting Rollback ---\n")
+				fmt.Fprintf(logWriter, "Restoring previous image: %s\n", previousImage)
+
+				rollbackConfig := containerConfig
+				rollbackConfig.Image = previousImage
+				delete(rollbackConfig.Labels, "schooner.build-id") // Don't associate with failed build
+
+				if rollbackID, rollbackErr := o.dockerClient.RunContainer(ctx, rollbackConfig); rollbackErr == nil {
+					fmt.Fprintf(logWriter, "✓ Rollback successful: %s\n", rollbackID[:12])
+					logger.Info("rollback successful", "previousImage", previousImage)
+				} else {
+					fmt.Fprintf(logWriter, "✗ Rollback failed: %s\n", rollbackErr)
+					logger.Error("rollback failed", "error", rollbackErr)
+				}
+			}
+
 			o.failBuild(ctx, build, fmt.Sprintf("deploy failed: %v", err))
 			return
 		}
@@ -343,10 +377,17 @@ func (o *Orchestrator) processBuild(buildID string) {
 
 // failBuild marks a build as failed
 func (o *Orchestrator) failBuild(ctx context.Context, build *models.Build, message string) {
+	// Check if this was a timeout
+	if ctx.Err() == context.DeadlineExceeded {
+		message = fmt.Sprintf("build timed out after %s: %s", buildTimeout, message)
+	}
+
 	build.Status = models.BuildStatusFailed
 	build.ErrorMessage = database.NullString(message)
 	build.FinishedAt = database.NullTime(time.Now())
-	o.buildQueries.Update(ctx, build)
+
+	// Use background context for the update since the original context may be cancelled
+	o.buildQueries.Update(context.Background(), build)
 }
 
 // TriggerManualBuild creates and queues a manual build

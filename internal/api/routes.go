@@ -76,6 +76,13 @@ func NewRouter(cfg *config.Config, db *database.DB) *chi.Mux {
 		slog.Warn("failed to create Git client", "error", err)
 	}
 
+	// Cancel any stale builds from previous run
+	if cancelled, err := buildQueries.CancelStaleBuilds(context.Background()); err != nil {
+		slog.Error("failed to cancel stale builds", "error", err)
+	} else if cancelled > 0 {
+		slog.Info("cancelled stale builds from previous run", "count", cancelled)
+	}
+
 	// Initialize build orchestrator
 	var orchestrator *build.Orchestrator
 	if gitClient != nil && dockerClient != nil {
