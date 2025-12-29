@@ -18,6 +18,10 @@ import (
 
 const schoonerOverrideFile = ".schooner.compose.override.yml"
 
+// schoonerDataVolume is the volume name where Schooner stores repo data
+// This must match the volume name used when deploying Schooner
+const schoonerDataVolume = "schooner_schooner-data"
+
 // ComposeStrategy builds using Docker Compose
 type ComposeStrategy struct {
 	dockerClient *docker.Client
@@ -298,6 +302,7 @@ func writeEnvFile(path string, envVars map[string]string) error {
 }
 
 // generateLabelOverride creates an override file that adds schooner labels to all services
+// and converts relative bind mounts to volume mounts (for containerized Schooner deployments)
 func generateLabelOverride(composePath string, opts build.BuildOptions) (string, error) {
 	// Read the original compose file
 	data, err := os.ReadFile(composePath)
@@ -305,7 +310,7 @@ func generateLabelOverride(composePath string, opts build.BuildOptions) (string,
 		return "", fmt.Errorf("failed to read compose file: %w", err)
 	}
 
-	// Parse to extract service names
+	// Parse to extract service names and volumes
 	var compose map[string]interface{}
 	if err := yaml.Unmarshal(data, &compose); err != nil {
 		return "", fmt.Errorf("failed to parse compose file: %w", err)
@@ -326,15 +331,40 @@ func generateLabelOverride(composePath string, opts build.BuildOptions) (string,
 		labels["schooner.build-id"] = opts.BuildID
 	}
 
+	// Check if we're running in a container with the schooner-data volume
+	// by checking if /data is a mount point (the volume path)
+	needsVolumeConversion := isRunningInContainer()
+
 	overrideServices := make(map[string]interface{})
-	for serviceName := range services {
-		overrideServices[serviceName] = map[string]interface{}{
+	hasBindMounts := false
+
+	for serviceName, serviceConfig := range services {
+		serviceOverride := map[string]interface{}{
 			"labels": labels,
 		}
+
+		// Convert bind mounts to volume mounts if running in container
+		if needsVolumeConversion {
+			if convertedVolumes := convertBindMountsToVolumes(serviceConfig, opts.RepoPath); len(convertedVolumes) > 0 {
+				serviceOverride["volumes"] = convertedVolumes
+				hasBindMounts = true
+			}
+		}
+
+		overrideServices[serviceName] = serviceOverride
 	}
 
 	override := map[string]interface{}{
 		"services": overrideServices,
+	}
+
+	// Add external volume definition if we converted any bind mounts
+	if hasBindMounts {
+		override["volumes"] = map[string]interface{}{
+			schoonerDataVolume: map[string]interface{}{
+				"external": true,
+			},
+		}
 	}
 
 	// Write override file
@@ -349,6 +379,148 @@ func generateLabelOverride(composePath string, opts build.BuildOptions) (string,
 	}
 
 	return overridePath, nil
+}
+
+// isRunningInContainer checks if Schooner is running inside a Docker container
+// by looking for the /data mount point which is used for the schooner-data volume
+func isRunningInContainer() bool {
+	// Check if /data exists and is likely a mount point
+	// In a container, /data is mounted as a volume
+	info, err := os.Stat("/data")
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+// convertBindMountsToVolumes converts relative bind mounts (./path) to volume mounts
+// using the schooner-data volume. This allows compose files with bind mounts to work
+// when Schooner runs in a container.
+func convertBindMountsToVolumes(serviceConfig interface{}, repoPath string) []interface{} {
+	service, ok := serviceConfig.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	volumes, ok := service["volumes"]
+	if !ok {
+		return nil
+	}
+
+	volumeList, ok := volumes.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var converted []interface{}
+	for _, vol := range volumeList {
+		switch v := vol.(type) {
+		case string:
+			// Short syntax: "host:container" or "host:container:mode"
+			if convertedVol := convertShortVolume(v, repoPath); convertedVol != nil {
+				converted = append(converted, convertedVol)
+			}
+		case map[string]interface{}:
+			// Long syntax - check if it's a bind mount with relative path
+			if convertedVol := convertLongVolume(v, repoPath); convertedVol != nil {
+				converted = append(converted, convertedVol)
+			}
+		}
+	}
+
+	return converted
+}
+
+// convertShortVolume converts a short-form volume string like "./path:/container/path"
+// to a long-form volume mount using the schooner-data volume with subpath
+func convertShortVolume(volStr string, repoPath string) map[string]interface{} {
+	parts := strings.SplitN(volStr, ":", 2)
+	if len(parts) < 2 {
+		return nil
+	}
+
+	source := parts[0]
+	targetWithMode := parts[1]
+
+	// Only convert relative paths (starting with . or ..)
+	if !strings.HasPrefix(source, "./") && !strings.HasPrefix(source, "../") {
+		return nil
+	}
+
+	// Parse target and mode
+	targetParts := strings.SplitN(targetWithMode, ":", 2)
+	target := targetParts[0]
+	readOnly := false
+	if len(targetParts) > 1 && (targetParts[1] == "ro" || strings.Contains(targetParts[1], "ro")) {
+		readOnly = true
+	}
+
+	// Calculate the subpath within the schooner-data volume
+	// repoPath is like /data/repos/github.com_user_repo_hash
+	// source is like ./migrations/init.sql
+	// We need subpath like repos/github.com_user_repo_hash/migrations/init.sql
+	cleanSource := filepath.Clean(source)
+	fullPath := filepath.Join(repoPath, cleanSource)
+
+	// Remove /data/ prefix to get the subpath
+	subpath := strings.TrimPrefix(fullPath, "/data/")
+
+	result := map[string]interface{}{
+		"type":   "volume",
+		"source": schoonerDataVolume,
+		"target": target,
+		"volume": map[string]interface{}{
+			"subpath": subpath,
+		},
+	}
+
+	if readOnly {
+		result["read_only"] = true
+	}
+
+	return result
+}
+
+// convertLongVolume converts a long-form volume with relative bind path
+func convertLongVolume(vol map[string]interface{}, repoPath string) map[string]interface{} {
+	volType, _ := vol["type"].(string)
+	if volType != "bind" && volType != "" {
+		// Only convert bind mounts (or unspecified type with relative source)
+		if volType != "" {
+			return nil
+		}
+	}
+
+	source, _ := vol["source"].(string)
+	target, _ := vol["target"].(string)
+
+	if target == "" || source == "" {
+		return nil
+	}
+
+	// Only convert relative paths
+	if !strings.HasPrefix(source, "./") && !strings.HasPrefix(source, "../") {
+		return nil
+	}
+
+	cleanSource := filepath.Clean(source)
+	fullPath := filepath.Join(repoPath, cleanSource)
+	subpath := strings.TrimPrefix(fullPath, "/data/")
+
+	result := map[string]interface{}{
+		"type":   "volume",
+		"source": schoonerDataVolume,
+		"target": target,
+		"volume": map[string]interface{}{
+			"subpath": subpath,
+		},
+	}
+
+	if ro, ok := vol["read_only"].(bool); ok && ro {
+		result["read_only"] = true
+	}
+
+	return result
 }
 
 // Down stops the compose services

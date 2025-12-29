@@ -213,6 +213,12 @@ func (c *Client) GetHeadCommit(repo *git.Repository) (*object.Commit, error) {
 
 // RepoPath returns the local path for a repository URL
 func (c *Client) RepoPath(url string) string {
+	return RepoPath(c.workDir, url)
+}
+
+// RepoPath returns the local path for a repository URL given a work directory.
+// This is a standalone function that can be used without a Client instance.
+func RepoPath(workDir, url string) string {
 	// Create a safe directory name from the URL
 	// e.g., "https://github.com/user/repo.git" -> "github.com_user_repo"
 	name := url
@@ -227,7 +233,7 @@ func (c *Client) RepoPath(url string) string {
 	hash := sha256.Sum256([]byte(url))
 	hashStr := hex.EncodeToString(hash[:4])
 
-	return filepath.Join(c.workDir, fmt.Sprintf("%s_%s", name, hashStr))
+	return filepath.Join(workDir, fmt.Sprintf("%s_%s", name, hashStr))
 }
 
 // Clean removes a repository from local storage

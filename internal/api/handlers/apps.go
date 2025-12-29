@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,10 +19,12 @@ import (
 	"github.com/google/uuid"
 
 	"schooner/internal/build"
+	"schooner/internal/build/strategies"
 	"schooner/internal/cloudflare"
 	"schooner/internal/config"
 	"schooner/internal/database/queries"
 	"schooner/internal/docker"
+	"schooner/internal/git"
 	"schooner/internal/github"
 	"schooner/internal/models"
 )
@@ -464,10 +468,19 @@ func (h *AppHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.dockerClient.StopContainer(ctx, app.GetContainerName(), 30*time.Second); err != nil {
-		slog.Error("failed to stop container", "app", app.Name, "error", err)
-		http.Error(w, "failed to stop container: "+err.Error(), http.StatusInternalServerError)
-		return
+	// For compose apps, use docker compose down
+	if app.BuildStrategy == models.BuildStrategyCompose {
+		if err := h.stopComposeApp(ctx, app); err != nil {
+			slog.Error("failed to stop compose app", "app", app.Name, "error", err)
+			http.Error(w, "failed to stop compose app: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := h.dockerClient.StopContainer(ctx, app.GetContainerName(), 30*time.Second); err != nil {
+			slog.Error("failed to stop container", "app", app.Name, "error", err)
+			http.Error(w, "failed to stop container: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	slog.Info("container stopped", "app", app.Name)
@@ -477,6 +490,30 @@ func (h *AppHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		"status":  "stopped",
 		"message": "Container stopped successfully",
 	})
+}
+
+// stopComposeApp stops a compose-based app using docker compose down
+func (h *AppHandler) stopComposeApp(ctx context.Context, app *models.App) error {
+	// Get the repo path
+	repoPath := git.RepoPath(h.cfg.Git.WorkDir, app.RepoURL)
+
+	// Find the compose file
+	composeFile := strategies.FindComposeFile(repoPath, app.ComposeFile)
+	if composeFile == "" {
+		return fmt.Errorf("compose file not found in %s", repoPath)
+	}
+
+	composePath := filepath.Join(repoPath, composeFile)
+
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "down")
+	cmd.Dir = repoPath
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker compose down failed: %w, output: %s", err, string(output))
+	}
+
+	return nil
 }
 
 // Start handles POST /api/apps/{appID}/start
